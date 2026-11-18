@@ -25,6 +25,7 @@ let enemies = [], boxes = [];
 let health, ammo, reserve, kills, elapsed, shots, hits, lastHurt;
 let yaw, pitch, recoil, flash, ads, sprint, reloadLeft, fireDelay, walk, foot;
 let aiming = false, trigger = false, touchX = 0, touchZ = 0, touchLook = null;
+let lastAimTap = null;
 let mouseButtons = 0;
 let mouseX = null, mouseY = null, edgeX = 0, edgeY = 0;
 let lockPending = false, lockRetryUsed = false;
@@ -619,6 +620,7 @@ function resetMouse() {
 function clearTouchInput() {
   if(touchLook && canvas.hasPointerCapture(touchLook.id)) canvas.releasePointerCapture(touchLook.id);
   touchLook=null;
+  lastAimTap=null;
   if(trigger) shotBuffer=0;
   trigger=aiming=crouchHeld=false;
   touchX=touchZ=touchLean=0;
@@ -893,11 +895,22 @@ function edgeTurn(p,extent) {
 }
 
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
+// A tap on a HUD control or a second look finger breaks a double-tap. A thumb
+// already holding the movement stick can stay down throughout the gesture.
+document.addEventListener('pointerdown',e=>{
+  if(e.pointerType==='touch' && (e.target!==canvas || touchLook)) {
+    lastAimTap=null;
+    if(touchLook) touchLook.tapEligible=false;
+  }
+},true);
 canvas.addEventListener('pointerdown',e=>{
   if(phase!=='playing' || e.pointerType==='mouse') return;
   e.preventDefault();
   if(!touchLook) {
-    touchLook={id:e.pointerId,x:e.clientX,y:e.clientY};
+    const rect=canvas.getBoundingClientRect();
+    const fromCenter=screenDelta(e.clientX-rect.left-rect.width/2,e.clientY-rect.top-rect.height/2);
+    touchLook={id:e.pointerId,x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY,
+      startedAt:e.timeStamp,tapEligible:e.pointerType==='touch' && fromCenter.x>=0};
     canvas.setPointerCapture?.(e.pointerId);
   }
 });
@@ -930,11 +943,23 @@ window.addEventListener('mouseout',e=>{
 });
 canvas.addEventListener('pointermove',e=>{
   if(phase!=='playing' || touchLook?.id!==e.pointerId) return;
+  if(Math.hypot(e.clientX-touchLook.startX,e.clientY-touchLook.startY)>10) touchLook.tapEligible=false;
   lookScreen(e.clientX-touchLook.x,e.clientY-touchLook.y);
   touchLook.x=e.clientX; touchLook.y=e.clientY;
 });
 function endTouchLook(e) {
-  if(touchLook?.id===e.pointerId) touchLook=null;
+  if(touchLook?.id!==e.pointerId) return;
+  const finger=touchLook;
+  touchLook=null;
+  const tapped=phase==='playing' && e.type==='pointerup' && finger.tapEligible &&
+    e.timeStamp-finger.startedAt<=250 && Math.hypot(e.clientX-finger.startX,e.clientY-finger.startY)<=10;
+  if(!tapped) { lastAimTap=null; return; }
+  if(lastAimTap && e.timeStamp-lastAimTap.time<=320 && Math.hypot(e.clientX-lastAimTap.x,e.clientY-lastAimTap.y)<=30) {
+    aiming=!aiming;
+    lastAimTap=null;
+  } else {
+    lastAimTap={x:e.clientX,y:e.clientY,time:e.timeStamp};
+  }
 }
 canvas.addEventListener('pointerup',endTouchLook);
 canvas.addEventListener('pointercancel',endTouchLook);

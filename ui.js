@@ -89,8 +89,9 @@ function drawPanel(id){
     showPanel(id,"FIELD MANUAL","操作手册",'<dl>'+[
       ["移动 / 冲刺",key("W A S D")+"　/　"+key("Shift")],["下蹲","按住 "+key("C")+" 或 "+key("Ctrl")],["转动视角","鼠标移动 / 方向键"],["射击 / 瞄准","鼠标左键 / 按住右键"],["换弹 / 暂停",key("R")+"　/　"+key("Esc")+" "+key("P")],
       ["左探头 / 右探头","按住 "+key("Q")+"　/　"+key("E")+"，松开回正"],["跳跃",key("空格")],
-      ["触屏移动 / 探头","左拇指按住摇杆移动，右拇指点「左探」或「右探」。点另一侧换边，再点同侧回正。"],
-      ["触屏转向 / 射击","在空白处或探头键上滑动可转向。按住射击键连射，拖动可跟随目标。"]].map(v=>row(...v)).join("")+'</dl><p style="margin:14px 0 0">移动鼠标即可环视。浏览器未锁定鼠标时，移至画面边缘可持续转向。P 键可暂停并调整视野与灵敏度。</p>');
+      ["触屏移动 / 探头","拖动左侧轮盘移动，点轮盘旁的「左探」或「右探」切换姿势，再点同侧回正。探头时也能移动。"],
+      ["触屏转向 / 瞄准","在右侧空白处滑动转向，双击举镜，再双击收镜。"],
+      ["触屏战斗","按住右侧「开火」连续射击，拖动可转向。点「跳跃」起跳，点「下蹲」切换蹲姿，点「换弹」更换弹匣。"]].map(v=>row(...v)).join("")+'</dl><p style="margin:14px 0 0">移动鼠标即可环视。浏览器未锁定鼠标时，移至画面边缘可持续转向。P 键可暂停并调整视野与灵敏度。</p>');
   }else if(id==="settings"){
     const slider=(id,label,min,max,step,value,text)=>'<div class="row"><label for="'+id+'">'+label+'</label><input type="range" id="'+id+'" min="'+min+'" max="'+max+'" step="'+step+'" value="'+value+'"><output id="'+id+'-value">'+text+'</output></div>';
     showPanel(id,"TERMINAL SETTINGS","操控与画面",
@@ -275,20 +276,21 @@ function stopStick(){
 }
 const dragToLook=(e,point)=>window.Game.lookScreen(e.clientX-point.x,e.clientY-point.y);
 bindTouchControl(stick,moveStick,moveStick,stopStick);
-for(const [id,method] of [["#touchAim","aim"],["#touchCrouch","crouch"]]){
-  const button=$(id);
-  function set(active){button.setAttribute("aria-pressed",String(active));window.Game?.[method](active)}
-  button.setAttribute("aria-pressed","false");
-  bindTouchControl(button,()=>set(button.getAttribute("aria-pressed")!=="true"),dragToLook,
-    cancelled=>{if(cancelled)set(false)});
+const crouchButton=$("#touchCrouch");
+function setCrouch(active){
+  crouchButton.setAttribute("aria-pressed",String(active));
+  window.Game?.crouch(active);
 }
+crouchButton.setAttribute("aria-pressed","false");
+bindTouchControl(crouchButton,()=>setCrouch(crouchButton.getAttribute("aria-pressed")!=="true"),dragToLook,
+  cancelled=>{if(cancelled)setCrouch(false)});
 function setPeek(side){
   peekLeft.setAttribute("aria-pressed",String(side===-1));
   peekRight.setAttribute("aria-pressed",String(side===1));
   window.Game?.lean(side);
 }
 for(const [button,side] of [[peekLeft,-1],[peekRight,1]]){
-  bindTouchControl(button,()=>setPeek(button.getAttribute("aria-pressed")==="true"?0:side),dragToLook,
+  bindTouchControl(button,()=>setPeek(button.getAttribute("aria-pressed")==="true"?0:side),null,
     cancelled=>{if(cancelled && button.getAttribute("aria-pressed")==="true")setPeek(0)});
 }
 bindTouchControl($("#touchFire"),()=>window.Game.fire(true),dragToLook,()=>window.Game?.fire(false));
@@ -300,9 +302,7 @@ function resetTouchControls(){
     if(control.hasPointerCapture(point.id))control.releasePointerCapture(point.id);
   }
   touchPointers.clear();
-  stopStick();setPeek(0);
-  $("#touchAim").setAttribute("aria-pressed","false");window.Game?.aim(false);
-  $("#touchCrouch").setAttribute("aria-pressed","false");window.Game?.crouch(false);
+  stopStick();setPeek(0);setCrouch(false);
   window.Game?.fire(false);
 }
 window.addEventListener("game-orientationchange",resetTouchControls);
