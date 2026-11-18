@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#101414"><title>潮闸行动 · TIDAL LOCK</title><link rel="icon" href="icon.svg" type="image/svg+xml"><link rel="stylesheet" href="style.css?v=1.2.1"></head>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#101414"><title>潮闸行动 · TIDAL LOCK</title><link rel="icon" href="icon.svg" type="image/svg+xml"><link rel="stylesheet" href="style.css?v=1.2.2"></head>
 <body data-phase="menu">
 <svg class="symbols" xmlns="http://www.w3.org/2000/svg"><defs>
 <symbol id="i-brand" viewBox="0 0 40 34"><path fill="currentColor" stroke="none" d="M2 29 17 3h9L11 29zm13 0 8-14 5 8-4 6zm11-17 5-9 8 14-5 9z"/></symbol>
@@ -30,14 +30,15 @@
 <h1 lang="en">TIDAL LOCK</h1><h2>潮闸行动</h2>
 <p class="summary">敌方守卫已封锁潮闸港区。穿过装卸场，清除闸门和泵站附近的守卫，夺回闸区控制权。</p>
 <div class="metadata"><div><span><svg><use href="#i-flag"/></svg>行动类型</span><strong>区域清剿</strong></div><div><span><svg><use href="#i-cross"/></svg>敌对目标</span><strong>06 <small>名守卫</small></strong></div><div><span><svg><use href="#i-person"/></svg>部署规模</span><strong>单人行动</strong></div></div>
-<button id="deploy" class="deploy"><svg><use href="#i-deploy"/></svg><span>开始行动</span><svg class="tail"><use href="#i-arrow"/></svg></button><span class="mobile-mode">横屏游玩</span>
+<button id="deploy" class="deploy"><svg><use href="#i-deploy"/></svg><span>开始行动</span><svg class="tail"><use href="#i-arrow"/></svg></button><button type="button" id="compatDeploy" class="compat-launch">兼容模式</button>
 </div>
 <button id="map-card" class="map-card" data-panel="map" aria-label="展开潮闸港区战区地图"><div class="map-head"><span><i></i> 区域概览</span><svg><use href="#i-expand"/></svg></div><div class="map-graphic"><canvas id="map-preview" width="480" height="196"></canvas><span class="map-n">N ▴</span></div><div class="map-caption"><span>潮闸港区</span><small>SECTOR <b>07</b></small></div></button>
 </section>
-<footer><div class="foot-left"><span class="live-dot"></span> 本地任务系统<span class="foot-slash">/</span><span class="muted">PVE SIMULATION</span></div><button data-panel="help"><svg><use href="#i-keys"/></svg> 操作说明</button><span class="build">BUILD 1.2.1</span></footer>
+<footer><div class="foot-left"><span class="live-dot"></span> 本地任务系统<span class="foot-slash">/</span><span class="muted">PVE SIMULATION</span></div><button data-panel="help"><svg><use href="#i-keys"/></svg> 操作说明</button><span class="build">BUILD 1.2.2</span></footer>
 </main>
 <div id="play-surface">
 <canvas id="game" tabindex="-1" aria-label="第一人称游戏画面"></canvas>
+<canvas id="compat-frame" aria-hidden="true" hidden></canvas>
 <div id="hud" hidden><div class="compass"><canvas id="bearing" width="640" height="62" aria-label="罗盘"></canvas><b>▴</b></div>
 <div class="mission-hud"><div class="radar-box"><canvas id="radar" width="300" height="240" aria-label="战区雷达"></canvas><b class="map-north">N</b><span class="zone-name">潮闸港区</span></div><div class="assignment"><svg><use href="#i-cross"/></svg><strong>清除港区守卫</strong><div id="objective"></div></div></div>
 <div class="hud-right"><time id="timer">00:00</time><button id="pause" class="icon-button" aria-label="暂停"><svg><use href="#i-pause"/></svg></button></div>
@@ -51,4 +52,4 @@
 <button id="touchAim">瞄准</button><button id="touchJump">跳跃</button><button id="touchFire">射击</button><button id="touchCrouch">下蹲</button><button id="touchReload">换弹</button></div></div></div>
 <div id="popup" hidden><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title"><header><div><small id="dlg-tag"></small><h2 id="dlg-title"></h2></div><button id="closePopup" class="icon-button" aria-label="关闭"><svg><use href="#i-close"/></svg></button></header><div id="dlg-body"></div></section></div>
 </div>
-<script type="module" src="ui.js?v=1.2.1"></script></body></html>
+<script type="module" src="ui.js?v=1.2.2"></script></body></html>

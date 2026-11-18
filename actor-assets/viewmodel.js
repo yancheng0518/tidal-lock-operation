@@ -1,12 +1,13 @@
 // Shared local PBR model and authored hand pose. The carried LOD reuses the first-person materials.
-const sources = new WeakMap();
+const fullSources = new WeakMap(), compactSources = new WeakMap();
 
-export function equipment(T) {
+export function equipment(T, compact=false) {
+  const sources=compact?compactSources:fullSources;
   if (!sources.has(T)) {
     const resource = import('./loader.js').then(async ({ GLTFLoader }) => {
       const loader = new GLTFLoader();
       const [rifle, optic] = await Promise.all(['carbine.glb', 'reflex.glb'].map(file =>
-        loader.loadAsync(new URL(file, import.meta.url).href)));
+        loader.loadAsync(new URL((compact?'./mobile/':'./')+file, import.meta.url).href)));
       const held = rifle.scene.getObjectByName('FP_m4a1');
       const carried = rifle.scene.getObjectByName('CarriedProp');
       const sight = optic.scene.getObjectByName('HoloOptic');
@@ -15,7 +16,7 @@ export function equipment(T) {
         if (!part.isMesh) return;
         part.frustumCulled = false;
         for (const map of ['map', 'normalMap', 'roughnessMap']) {
-          if (part.material[map]) part.material[map].anisotropy = 4;
+          if (part.material[map]) part.material[map].anisotropy = compact ? 2 : 4;
         }
       });
       // An oxide coat is diffuse in overcast sky; polished edges retain the source's metal map.

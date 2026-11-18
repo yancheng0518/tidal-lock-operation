@@ -20,3 +20,5 @@ License information — https://polyhaven.com/license
 The bespoke dam-face elevation texture was generated for Tidal Lock. The sector survey was rendered from the playable scene.
 
 The storm-break panorama combines Industrial Sunset and Drackenstein Quarry with a reprojected horizon and a scene-specific colour grade. The animated spillway spray mask was procedurally generated for this demo.
+
+The images in `mobile/` are smaller JPEG encodings of the same credited surface maps, dam elevation, panorama and spray mask. The mobile environment lighting texture `harbour-ibl.png` was prefiltered from that panorama.

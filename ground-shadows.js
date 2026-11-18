@@ -13,7 +13,7 @@ export function createGroundShadows(T, renderer, scene, enemies, bounds) {
     for(const y of [0,3])viewBox.expandByPoint(new T.Vector3(x,y,z).applyMatrix4(camera.matrixWorldInverse));
   Object.assign(camera,{left:viewBox.min.x,right:viewBox.max.x,top:viewBox.max.y,bottom:viewBox.min.y});
   camera.updateProjectionMatrix();camera.layers.set(1);
-  const size=768, mask=new T.WebGLRenderTarget(size,size,{depthBuffer:false,stencilBuffer:false});
+  const size=scene.userData.compact?384:768, mask=new T.WebGLRenderTarget(size,size,{depthBuffer:false,stencilBuffer:false});
   const ink=new T.MeshBasicMaterial({color:0xffffff,fog:false,toneMapped:false,depthTest:false,depthWrite:false});
   const projector=new T.Matrix4().multiplyMatrices(camera.projectionMatrix,camera.matrixWorldInverse);
   const material=new T.ShaderMaterial({

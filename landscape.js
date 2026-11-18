@@ -71,7 +71,9 @@ document.addEventListener('fullscreenchange', () => {
 });
 window.addEventListener('resize', syncLayout);
 window.addEventListener('orientationchange', syncLayout);
-orientation?.addEventListener('change', syncLayout);
-coarse.addEventListener('change', syncLayout);
-portrait.addEventListener('change', syncLayout);
+orientation?.addEventListener?.('change', syncLayout);
+for (const query of [coarse, portrait]) {
+  if (query.addEventListener) query.addEventListener('change', syncLayout);
+  else query.addListener(syncLayout);
+}
 syncLayout();

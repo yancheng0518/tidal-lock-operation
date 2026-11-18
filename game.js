@@ -1,12 +1,13 @@
-import * as THREE from './vendor/three.module.js';
-import { buildWorld } from './world.js';
-import { createWeapon, createEnemy } from './actors.js';
+import * as THREE from './vendor/three.core.min.js';
+import { PORT } from './level.js';
+import { createCompatRenderer } from './compat-renderer.js?v=1.2.2';
 import { createAudio } from './audio.js';
-import { createGroundShadows } from './ground-shadows.js';
-import { createCinema } from './cinema.js';
 import { PlayerMotor } from './motor.js';
 
 const canvas = document.getElementById('game');
+const compatFrame = document.getElementById('compat-frame');
+const compact = matchMedia('(pointer: coarse)').matches;
+const directCompat = new URLSearchParams(location.search).get('mode') === 'compat';
 const audio = createAudio();
 const magazine = 30;
 const reloadDuration = 1.72;
@@ -34,13 +35,14 @@ let sensitivity = 1, raf = 0, previous = 0, nextState = 0, hadLock = false;
 let aimSensitivity = .65, fieldOfView = 72;
 let errorMessage = '', roundSerial = 0, runtime = 0;
 let warmed = false;
+let compat, graphicsContext, graphicsEpoch=0, interruptWarmup=null, preferCompat=false, shaderFailure='';
 const tracers = [], sparks = [];
 let tracerIndex = 0, sparkIndex = 0, sparkObject;
 let shadowAge = 0;
 let groundShadows;
 let cinema;
 let desiredDpr = 1, slowTime = 0, fastTime = 0;
-let graphics = 'balanced', averageFrame = 1 / 60;
+let graphics = compact ? 'performance' : 'balanced', averageFrame = 1 / 60;
 
 function qualityRatio() {
   const mobile = matchMedia('(pointer: coarse)').matches;
@@ -70,7 +72,7 @@ function heading() { return THREE.MathUtils.euclideanModulo(-THREE.MathUtils.rad
 
 function announce() {
   emit('game-state', {
-    phase, health: Math.ceil(health ?? 100), ammo: ammo ?? magazine,
+    phase, rendererMode:canvas.dataset.renderer || 'loading', health: Math.ceil(health ?? 100), ammo: ammo ?? magazine,
     reserve: reserve ?? 150, kills: kills ?? 0, total: enemies.length || 6,
     elapsed: elapsed || 0, reloading: reloadLeft > 0,
     reloadProgress: reloadLeft > 0 ? 1 - reloadLeft / reloadDuration : 0,
@@ -85,12 +87,17 @@ function announce() {
 function fx(type) { emit('game-fx', {type}); }
 
 function resize() {
-  if (!renderer) return;
+  if (!camera || (!renderer && !compat)) return;
   // The layout box is in game coordinates, even when its parent is rotated.
   const w = canvas.clientWidth, h = canvas.clientHeight;
-  renderer.getSize(viewportSize);
-  if (!w || !h || (viewportSize.x === w && viewportSize.y === h && camera.aspect === w / h)) return;
-  renderer.setSize(w, h, false);
+  if (!w || !h) return;
+  if (compat) {
+    compat.resize(w,h);
+  } else {
+    renderer.getSize(viewportSize);
+    if (viewportSize.x === w && viewportSize.y === h && camera.aspect === w / h) return;
+    renderer.setSize(w,h,false);
+  }
   for (const cam of [camera, gunCamera]) {
     cam.aspect = w / h;
     cam.updateProjectionMatrix();
@@ -98,38 +105,100 @@ function resize() {
   if (warmed && ['paused','won','lost'].includes(phase)) render();
 }
 
-function init() {
-  if (world) return;
-  renderer = new THREE.WebGLRenderer({canvas, antialias:true, alpha:false, powerPreference:'high-performance'});
-  desiredDpr = qualityRatio();
-  renderer.setPixelRatio(desiredDpr);
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  renderer.shadowMap.autoUpdate = false;
-  renderer.shadowMap.needsUpdate = true;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.02;
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.autoClear = false;
-  cinema = createCinema(renderer);
+function initSimulation() {
+  if (motor) return;
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(fieldOfView,1,0.07,390);
   camera.rotation.order = 'YXZ';
   gunScene = new THREE.Scene();
   gunCamera = new THREE.PerspectiveCamera(65,1,0.015,10);
-  world = buildWorld(THREE,scene);
-  world.setQuality?.(graphics);
+  world = PORT;
   boxes = world.colliders.map(b => new THREE.Box3(
     new THREE.Vector3(b.minX,b.minY ?? -0.5,b.minZ),
     new THREE.Vector3(b.maxX,b.height ?? 4,b.maxZ)
   ));
   motor = new PlayerMotor(boxes,world.bounds);
-  weapon = createWeapon(THREE,gunScene,scene);
-  enemies = world.spawns.map((spawn,i) => ({
-    ...createEnemy(THREE,scene,i), spawn, index:i, hp:100
-  }));
+  enemies = world.spawns.map((spawn,index) => ({group:new THREE.Group(), spawn, index, hp:100}));
   initEffects();
+}
+
+async function warmWebGL(epoch) {
+  const options={alpha:false,antialias:!compact || graphics==='high',
+    powerPreference:compact?'default':'high-performance'};
+  const context=canvas.getContext('webgl2',options);
+  if (!context || context.isContextLost()) throw new Error('浏览器未能创建 WebGL 2 上下文。');
+  graphicsContext=context;
+  const [T,{buildWorld},{createWeapon,createEnemy},{createGroundShadows},{createCinema}]=await Promise.all([
+    import('./vendor/three.module.js'), import('./world.js?v=1.2.2'), import('./actors.js?v=1.2.2'),
+    import('./ground-shadows.js?v=1.2.2'), import('./cinema.js?v=1.2.2')
+  ]);
+  if(epoch!==graphicsEpoch) return;
+  renderer=new T.WebGLRenderer({canvas,context,...options});
+  renderer.debug.onShaderError=(gl,program)=>{
+    shaderFailure='图形驱动未能编译场景着色器。';
+    console.warn(shaderFailure,gl.getProgramInfoLog(program));
+  };
+  desiredDpr=qualityRatio();renderer.setPixelRatio(desiredDpr);
+  renderer.shadowMap.enabled=true;renderer.shadowMap.type=T.PCFSoftShadowMap;
+  renderer.shadowMap.autoUpdate=false;renderer.shadowMap.needsUpdate=true;
+  renderer.toneMapping=T.ACESFilmicToneMapping;renderer.toneMappingExposure=1.02;
+  renderer.outputColorSpace=T.SRGBColorSpace;renderer.autoClear=false;
+  if(!compact || graphics==='high') cinema=createCinema(renderer);
+  world=buildWorld(T,scene,{compact,supportsHDR:renderer.extensions.has('EXT_color_buffer_float')});
+  world.setQuality?.(graphics);
+  weapon=createWeapon(T,gunScene,scene);
+  for(const e of enemies){
+    const art=createEnemy(T,scene,e.index);
+    art.group.position.copy(e.group.position);art.group.quaternion.copy(e.group.quaternion);
+    Object.assign(e,art);
+    e.update(0,{moving:0,time:0,hit:0,dead:false});
+  }
+  resize();updateCamera();
+  await Promise.all([world.ready,weapon.ready,...enemies.map(e=>e.ready)]);
+  if(epoch!==graphicsEpoch)return;
+  world.captureReflection?.(renderer);
+  groundShadows=createGroundShadows(T,renderer,scene,enemies,world.bounds);
+  groundShadows.setQuality(graphics);
+  gunScene.environment=scene.environment;gunScene.environmentIntensity=.30;
+  if(renderer.compileAsync) {
+    await renderer.compileAsync(scene,camera);
+    if(epoch!==graphicsEpoch)return;
+    await renderer.compileAsync(gunScene,gunCamera);
+    if(epoch!==graphicsEpoch)return;
+  }
+  resetWeapon();render();
+  const glError=context.getError();
+  if(context.isContextLost() || glError===context.OUT_OF_MEMORY || glError===context.INVALID_FRAMEBUFFER_OPERATION)
+    throw new Error('图形设备无法完成首帧绘制。');
+  canvas.dataset.renderer='webgl';
+}
+
+function useCompat(reason) {
+  preferCompat=true;
+  if(compat || !motor)return;
+  graphicsEpoch++;
+  interruptWarmup?.(new Error('已切换至兼容画面。'));
+  if(reason) console.warn('使用轻量兼容画面',reason);
+  // Keep the simulation and input surface alive when a driver or asset fails mid-round.
+  for(const e of enemies){
+    const group=new THREE.Group();
+    group.position.copy(e.group.position);group.quaternion.copy(e.group.quaternion);
+    e.group=group;e.update=e.ready=e.hitMeshes=null;
+  }
+  if(renderer){
+    try { world.dispose?.(); } catch { /* A lost context can already be invalid. */ }
+    try { renderer.dispose(); } catch { /* Already lost. */ }
+  }
+  try { if(graphicsContext && !graphicsContext.isContextLost()) graphicsContext.getExtension('WEBGL_lose_context')?.loseContext(); } catch {}
+  graphicsContext=null;
+  renderer=groundShadows=cinema=weapon=null;
+  world=PORT;scene.clear();scene.environment=scene.background=null;gunScene.clear();gunScene.environment=null;
+  canvas.width=canvas.height=1;
+  compat=createCompatRenderer(compatFrame,PORT);
+  canvas.dataset.renderer='compat';compatFrame.hidden=false;
+  warmed=true;
   resize();
+  if(phase!=='loading' && phase!=='menu'){render();announce();}
 }
 
 function initEffects() {
@@ -338,7 +407,8 @@ function enemyTick(e,dt) {
     }
   }
   const angle=e.group.rotation.y;
-  e.update(dt,{moving:motion,time:elapsed,hit:e.hit,dead:e.hp<=0,alert:e.alerted,firing:e.firing,
+  e.moving=motion;
+  e.update?.(dt,{moving:motion,time:elapsed,hit:e.hit,dead:e.hp<=0,alert:e.alerted,firing:e.firing,
     strafe:mxSpeed*Math.cos(angle)-mzSpeed*Math.sin(angle),forward:mxSpeed*Math.sin(angle)+mzSpeed*Math.cos(angle)});
 }
 
@@ -436,7 +506,7 @@ function step(dt) {
   for(const e of enemies) enemyTick(e,dt);
   if(health>0 && elapsed-lastHurt>8.5 && health<100) health=Math.min(100,health+dt*3.5);
   const airborne=!motor.grounded,jumping=motor.vy>0;
-  weapon.update(dt,{
+  weapon?.update(dt,{
     ads,reload:reloadLeft>0?1-reloadLeft/reloadDuration:0,fire:flash,shots,walk,time:elapsed,
     sprint,strafe,crouch:crouchBlend,stepPhase:foot,viewRotation:camera.quaternion,
     lean,airborne,verticalVelocity:motor.vy,landing:motor.landing,sunVisibility:updateSunVisibility(dt)
@@ -470,15 +540,23 @@ function updateSunVisibility(dt) {
 }
 
 function render() {
-  if (cinema && graphics !== 'performance') {
-    cinema.render(scene,camera,gunScene,gunCamera);
+  if (compat) {
+    compat.render({camera,enemies,ads,walk,sprint,flash,lean,foot,time:elapsed,
+      reload:reloadLeft>0?1-reloadLeft/reloadDuration:0,strafe,crouch:crouchBlend,
+      airborne:!motor.grounded,landing:motor.landing,shots,tracers,sparks});
     return;
   }
-  renderer.setRenderTarget(null);
-  renderer.clear();
-  renderer.render(scene,camera);
-  renderer.clearDepth();
-  renderer.render(gunScene,gunCamera);
+  if (!renderer) return;
+  if (cinema && graphics !== 'performance') {
+    cinema.render(scene,camera,gunScene,gunCamera);
+  } else {
+    renderer.setRenderTarget(null);
+    renderer.clear();
+    renderer.render(scene,camera);
+    renderer.clearDepth();
+    renderer.render(gunScene,gunCamera);
+  }
+  if(shaderFailure)throw new Error(shaderFailure);
 }
 
 function frame(now) {
@@ -487,12 +565,16 @@ function frame(now) {
   const rawDt=previous ? (now-previous)/1000 : 1/60;
   previous=now;
   const dt=Math.min(.085,rawDt);
-  step(dt);
-  shadowAge+=dt;
-  if(graphics==='high' && shadowAge>.10) { renderer.shadowMap.needsUpdate=true;shadowAge=0; }
-  groundShadows?.update(dt,graphics);
-  render();
-  if(graphics!=='high') {
+  try {
+    step(dt);
+    shadowAge+=dt;
+    if(renderer && graphics==='high' && shadowAge>.10) { renderer.shadowMap.needsUpdate=true;shadowAge=0; }
+    groundShadows?.update(dt,graphics);
+    render();
+  } catch(err) {
+    if(!recoverGraphics(err)) return;
+  }
+  if(renderer && graphics!=='high') {
     averageFrame += (dt-averageFrame)*(1-Math.exp(-dt*3));
     slowTime = averageFrame>.02 ? slowTime+dt : 0;
     fastTime = averageFrame<.0175 ? fastTime+dt : 0;
@@ -558,7 +640,54 @@ function finish(result) {
   announce();
 }
 
-function start() {
+function resetWeapon(){
+  weapon?.update(1,{ads:0,reload:0,fire:0,shots:0,walk:0,time:0,sprint:0,strafe:0,
+    crouch:0,stepPhase:0,viewRotation:camera.quaternion,sunVisibility:1});
+}
+
+function recoverGraphics(reason) {
+  if(!compat){
+    try{useCompat(reason);return true;}
+    catch(err){reason=err;}
+  }
+  errorMessage=reason?.message || String(reason);
+  console.error(reason);finish('error');return false;
+}
+
+const pendingKey='tidal-graphics-pending';
+function lastLaunchInterrupted() {
+  try {
+    const timestamp=Number(sessionStorage.getItem(pendingKey));
+    return timestamp>0 && Date.now()-timestamp<300000;
+  } catch {return false;}
+}
+
+async function prepareGraphics(serial) {
+  if(preferCompat || directCompat || (!warmed && compact && lastLaunchInterrupted())) {
+    try{sessionStorage.removeItem(pendingKey);}catch{}
+    useCompat();return;
+  }
+  if(warmed)return;
+  const epoch=++graphicsEpoch;
+  let timer;
+  const interrupted=new Promise((_,reject)=>{
+    interruptWarmup=reject;
+    timer=setTimeout(()=>reject(new Error('3D 场景加载超时。')),compact?12000:23000);
+  });
+  try{
+    if(compact){try{sessionStorage.setItem(pendingKey,String(Date.now()));}catch{}}
+    await Promise.race([warmWebGL(epoch),interrupted]);
+    if(epoch===graphicsEpoch)warmed=true;
+  }catch(err){
+    if(serial===roundSerial && !compat)useCompat(err);
+  }finally{
+    clearTimeout(timer);interruptWarmup=null;
+    try{sessionStorage.removeItem(pendingKey);}catch{}
+  }
+}
+
+function start(forceCompat=false) {
+  if(forceCompat===true)preferCompat=true;
   if(phase==='loading') return;
   const serial=++roundSerial;
   clearInput();
@@ -569,7 +698,7 @@ function start() {
   requestAnimationFrame(() => requestAnimationFrame(async () => {
     if(serial!==roundSerial) return;
     try {
-      init();
+      initSimulation();
       motor.reset();
       player.set(0,eye,22);
       leanPose=lean=0;
@@ -580,40 +709,24 @@ function start() {
         e.hp=100; e.hit=e.firing=0; e.alerted=false; e.cooldown=3.5+e.index*.48;
         e.group.position.set(e.spawn.x,0,e.spawn.z); e.group.rotation.set(0,0,0);
         e.group.visible=true;
-        e.update(0,{moving:0,time:0,hit:0,dead:false});
+        e.moving=0;
+        e.update?.(0,{moving:0,time:0,hit:0,dead:false});
       }
       for(const t of tracers) { t.life=0; t.line.visible=false; }
       const buf=sparkObject.geometry.attributes.position;
       sparks.forEach((p,i)=>{p.life=0; buf.setXYZ(i,0,-999,0);}); buf.needsUpdate=true;
-      renderer.shadowMap.needsUpdate=true;
-      resize();
       updateCamera();
-      weapon.update(1,{ads:0,reload:0,fire:0,shots:0,walk:0,time:0,sprint:0,strafe:0,
-        crouch:0,stepPhase:0,viewRotation:camera.quaternion,sunVisibility:1});
-      if(!warmed) {
-        await Promise.all([world.ready,weapon.ready,...enemies.map(enemy=>enemy.ready)]);
-        if(serial!==roundSerial) return;
-        world.captureReflection?.(renderer);
-        groundShadows=createGroundShadows(THREE,renderer,scene,enemies,world.bounds);
-        groundShadows.setQuality(graphics);
-        gunScene.environment=scene.environment;
-        gunScene.environmentIntensity=.30;
-        if(renderer.compileAsync) {
-          await renderer.compileAsync(scene,camera);
-          await renderer.compileAsync(gunScene,gunCamera);
-        }
-        render();
-        await new Promise(resolve=>requestAnimationFrame(resolve));
-        warmed=true;
-      }
+      await prepareGraphics(serial);
       if(serial!==roundSerial) return;
+      if(renderer)renderer.shadowMap.needsUpdate=true;
+      resize();resetWeapon();
       groundShadows?.update(1,graphics);
       render();
       resume(false);
     } catch(err) {
-      console.error(err);
-      errorMessage=err.message || String(err);
-      finish('error');
+      if(serial!==roundSerial)return;
+      if(motor && !compat && recoverGraphics(err)){resume(false);return;}
+      errorMessage=err.message || String(err);console.error(err);finish('error');
     }
   }));
 }
@@ -630,7 +743,7 @@ function resume(requestLock=true) {
   canvas.focus({preventScroll:true});
   raf=requestAnimationFrame(frame);
 }
-function menu() { roundSerial++; finish('menu'); }
+function menu() { roundSerial++;graphicsEpoch++;interruptWarmup?.(new Error('已返回部署。'));finish('menu'); }
 
 function look(dx,dy) {
   if(phase!=='playing') return;
@@ -745,12 +858,15 @@ window.addEventListener('game-orientationchange',()=>{
 });
 canvas.addEventListener('webglcontextlost',e=>{
   e.preventDefault();
-  errorMessage='图形设备暂时失去连接，请重新载入页面。';
-  finish('error');
+  if(compat || !motor)return;
+  const reason=new Error('图形设备的上下文已被浏览器释放。');
+  if(interruptWarmup)interruptWarmup(reason);
+  else recoverGraphics(reason);
 });
 
 window.Game={
   start, pause, resume, restart:start, menu, reload:beginReload, fire, look, lookScreen, screenDelta, setGraphics,
+  useCompat(){try{useCompat();}catch(err){errorMessage=err.message||String(err);finish('error');}},
   lean(sign){ touchLean=phase==='playing' ? Math.sign(Number(sign)||0) : 0; },
   jump(){ if(phase==='playing') motor.jump(); },
   aim(down){ aiming=phase==='playing' && !!down; },

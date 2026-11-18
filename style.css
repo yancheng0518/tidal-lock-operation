@@ -56,7 +56,10 @@ body[data-phase="playing"] #game{cursor:none}
 
 .credits-link{display:inline-block;margin-top:14px;color:#bccbc1;font-size:11px;text-underline-offset:3px}
 
-.mobile-mode{display:none}
+.compat-launch{display:inline-flex;align-items:center;min-height:44px;padding:0 8px;margin-left:8px;font-size:13px;color:#e0e6e2;text-decoration:underline;text-underline-offset:4px}
+.compat-launch:hover{color:var(--orange)}
+#compat-frame{display:block;position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+body[data-phase="menu"] #compat-frame{display:none}
 #play-surface{
   display:contents;
   --play-safe-left:env(safe-area-inset-left,0px);
@@ -80,7 +83,6 @@ body.rotated-landscape:not([data-phase="menu"]) #play-surface{
   --play-safe-bottom:env(safe-area-inset-left,0px);
 }
 @media(pointer:coarse){
-  .mobile-mode{display:inline-block;vertical-align:middle;margin-left:12px;color:#d5ded6;font-size:12px}
   #play-surface .mission-hud{left:max(2.3%,calc(var(--play-safe-left) + 7px));top:max(3%,calc(var(--play-safe-top) + 4px))}
   #play-surface .hud-right{right:max(2.5%,calc(var(--play-safe-right) + 7px));top:max(3%,calc(var(--play-safe-top) + 4px))}
   #play-surface .compass{top:max(2%,var(--play-safe-top))}

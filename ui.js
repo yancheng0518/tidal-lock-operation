@@ -1,11 +1,13 @@
 import { enterLandscape, leaveLandscape } from "./landscape.js";
-const gameModule = "./game.js?v=1.2.1";
+import { MAP_PLAN } from "./level.js";
+const gameModule = "./game.js?v=1.2.2";
 const $ = selector => document.querySelector(selector);
 const popup = $("#popup"), hud = $("#hud"), body = document.body;
 const fmtTime = value => [Math.floor(value / 60), Math.floor(value % 60)].map(v => String(v).padStart(2,"0")).join(":");
 const icon = name => '<svg aria-hidden="true"><use href="#i-' + name + '"/></svg>';
-let state = {phase:"menu"}, panel = "", lastFocus, plan, boot, feedTimer, markTimer, hurtTimer;
-let muted=false, sensitivity=1, aimSensitivity=.65, fieldOfView=72, graphics="balanced";
+let state = {phase:"menu"}, panel = "", lastFocus, plan=MAP_PLAN, boot, feedTimer, markTimer, hurtTimer;
+let wantsCompat=new URLSearchParams(location.search).get("mode")==="compat";
+let muted=false, sensitivity=1, aimSensitivity=.65, fieldOfView=72, graphics=matchMedia("(pointer: coarse)").matches?"performance":"balanced";
 function readNumber(key, fallback, min, max){
   const raw=localStorage.getItem(key), value=Number(raw);
   return raw!==null && Number.isFinite(value) ? Math.max(min,Math.min(max,value)) : fallback;
@@ -39,6 +41,7 @@ survey.src="sector-survey.webp";
 function paintMap(canvas,mode,live){
   if(!canvas)return;
   const w=canvas.width,h=canvas.height,c=canvas.getContext("2d");
+  if(!c)return;
   const isHUD=mode==="hud", isPreview=mode==="preview";
   const scale=isHUD?w/40:isPreview?h/42:Math.min(w/56,h/66);
   const centreX=isHUD?live.x:0,centreZ=isHUD?live.z:-1;
@@ -89,11 +92,13 @@ function drawPanel(id){
       slider("sens","鼠标灵敏度",.3,3,.05,sensitivity,sensitivity.toFixed(2)+"×")+
       slider("aim-sens","举镜灵敏度",.3,1,.05,aimSensitivity,Math.round(aimSensitivity*100)+"%")+
       slider("fov","垂直视野",60,90,1,fieldOfView,fieldOfView+"°")+
-      '<div class="row"><label for="quality">渲染画质</label><select id="quality"><option value="performance">流畅</option><option value="balanced">自适应</option><option value="high">高清</option></select></div>'+
+      (state.rendererMode==="compat"?'<div class="row"><span>渲染画质</span><span>轻量兼容</span></div>':'<div class="row"><label for="quality">渲染画质</label><select id="quality"><option value="performance">流畅</option><option value="balanced">自适应</option><option value="high">高清</option></select></div>')+
       '<div class="row"><label for="snd">行动音效</label><button class="option" id="snd">'+(muted?"关闭":"开启")+'</button></div><a class="credits-link" href="actor-assets/CREDITS.md" target="_blank" rel="noopener">角色、装备与动作署名 ↗</a>　<a class="credits-link" href="world-assets/CREDITS.md" target="_blank" rel="noopener">场景素材署名 ↗</a>');
     $("#snd").onclick=()=>{muted=!muted;applyOptions();$("#snd").textContent=muted?"关闭":"开启"};
-    $("#quality").value=graphics;
-    $("#quality").onchange=e=>{graphics=e.target.value;applyOptions()};
+    if($("#quality")){
+      $("#quality").value=graphics;
+      $("#quality").onchange=e=>{graphics=e.target.value;applyOptions()};
+    }
     $("#sens").oninput=e=>{sensitivity=Number(e.target.value);$("#sens-value").textContent=sensitivity.toFixed(2)+"×";applyOptions()};
     $("#aim-sens").oninput=e=>{aimSensitivity=Number(e.target.value);$("#aim-sens-value").textContent=Math.round(aimSensitivity*100)+"%";applyOptions()};
     $("#fov").oninput=e=>{fieldOfView=Number(e.target.value);$("#fov-value").textContent=fieldOfView+"°";applyOptions()};
@@ -102,23 +107,37 @@ function drawPanel(id){
 }
 function phasePanel(phase){
   if(phase==="playing"||phase==="menu"){closePanel();return}
-  if(phase==="loading"){showPanel(phase,"DEPLOYMENT","正在进入潮闸港区",'<p>正在载入场景与装备。</p><div class="loadline"></div>',false);return}
+  if(phase==="loading"){
+    const message=wantsCompat?"正在准备轻量兼容画面。":"正在载入场景与装备。";
+    showPanel(phase,"DEPLOYMENT","正在进入潮闸港区",'<p>'+message+'</p><div class="loadline"></div>'+
+      (wantsCompat?"":'<div class="actions">'+action("compatible","直接用兼容模式进入")+'</div>'),false);
+    return;
+  }
   if(phase==="paused"){showPanel(phase,"OPERATION PAUSED","行动已暂停",'<p>已清除 '+state.kills+' / '+state.total+' 名守卫。</p><div class="actions">'+action("resume","继续行动")+action("settings","操控与画面")+action("restart","重新开始")+action("menu","返回部署")+'</div>',false);return}
   if(phase==="won"||phase==="lost"){
     showPanel(phase,"AFTER ACTION REPORT",phase==="won"?"港区已肃清":"行动中断",'<p>'+(phase==="won"?"港区守卫已全部清除。潮闸港区控制权已恢复。":state.health<=0?"行动员失去作战能力。":"弹药耗尽，行动终止。")+'</p><dl>'+row("清除目标",state.kills+" / "+state.total)+row("行动用时",fmtTime(state.elapsed))+row("命中率",(state.shots?Math.round(100*state.hits/state.shots):0)+"%")+'</dl><div class="actions">'+action("restart","再次部署")+action("menu","返回部署")+'</div>',false);return
   }
-  if(phase==="error")showPanel("error","GRAPHICS SYSTEM","场景未能载入",'<p>请使用支持 WebGL 2 的浏览器并开启硬件加速，再重新载入。</p><div class="actions">'+action("refresh","重新载入")+action("menu","返回部署")+'</div>',false);
+  if(phase==="error"){
+    showPanel("error","DEPLOYMENT","行动载入中断",'<p id="launch-error"></p><div class="actions">'+action("retry-compatible","重新载入兼容模式")+action("menu","返回部署")+'</div>',false);
+    $("#launch-error").textContent=state.error || "游戏文件未能载入，请检查网络连接后重试。";
+  }
 }
-async function deploy(){
+function loadGame(){
+  if(!boot)boot=import(gameModule).catch(error=>{boot=null;throw error});
+  return boot;
+}
+async function deploy(compatible=false){
+  wantsCompat=wantsCompat || compatible;
   $("#deploy").disabled=true;
   enterLandscape();
-  try { if(!window.Game){body.dataset.phase="loading";phasePanel("loading");boot ||= import(gameModule);await boot}
-    applyOptions();window.Game.start();
-  } catch(e){console.error(e);leaveLandscape();body.dataset.phase="error";state={phase:"error"};phasePanel("error");boot=null}
+  try { if(!window.Game){body.dataset.phase="loading";phasePanel("loading");await loadGame()}
+    applyOptions();window.Game.start(wantsCompat);
+  } catch(e){console.error(e);leaveLandscape();body.dataset.phase="error";state={phase:"error",error:"基础程序载入失败。"+(e.message||"请检查网络连接后重试。")};phasePanel("error");boot=null}
   finally{$("#deploy").disabled=false}
 }
 function paintCompass(heading){
   const canvas=$("#bearing"),c=canvas.getContext("2d"),w=canvas.width,h=canvas.height,mid=w/2;
+  if(!c)return;
   c.clearRect(0,0,w,h);c.textAlign="center";c.lineWidth=1.5;
   const labels=["N","NE","E","SE","S","SW","W","NW"];
   for(let angle=Math.floor((heading-52)/5)*5;angle<=heading+52;angle+=5){
@@ -165,12 +184,19 @@ window.addEventListener("game-fx",({detail:{type,azimuth}})=>{
   if(type==="kill"||type==="empty"){clearTimeout(feedTimer);$("#feed").textContent=type==="kill"?"目标已清除":"弹匣已空";feedTimer=setTimeout(()=>$("#feed").textContent="",1200)}
   if(type==="hurt"){if(Number.isFinite(azimuth)){clearTimeout(threatTimer);threatBearing=azimuth;threat.classList.add("visible");threatTimer=setTimeout(()=>{threatBearing=null;threat.classList.remove("visible")},800)}clearTimeout(hurtTimer);$("#damage").style.opacity="1";hurtTimer=setTimeout(()=>$("#damage").style.opacity="0",160)}
 });
-$("#deploy").onclick=deploy;$("#homeNav").onclick=()=>{closePanel();$("#deploy").focus()};
+$("#deploy").onclick=()=>deploy();$("#compatDeploy").onclick=()=>deploy(true);
+$("#homeNav").onclick=()=>{closePanel();$("#deploy").focus()};
 document.querySelectorAll("[data-panel]").forEach(b=>b.onclick=()=>drawPanel(b.dataset.panel));
 function dismissPanel(){if(state.phase==="paused"&&panel==="settings")phasePanel("paused");else closePanel()}
 $("#closePopup").onclick=dismissPanel;popup.addEventListener("click",e=>{
   if(e.target===popup&&!$("#closePopup").hidden){dismissPanel();return}
   const a=e.target.closest("[data-action]")?.dataset.action;if(!a)return;
+  if(a==="compatible"){wantsCompat=true;phasePanel("loading");window.Game?.useCompat();return}
+  if(a==="retry-compatible"){
+    const url=new URL(location.href);url.searchParams.set("mode","compat");
+    if(url.href===location.href)location.reload();else location.replace(url);
+    return;
+  }
   if(a==="resume"||a==="restart")enterLandscape();
   if(a==="settings")drawPanel("settings");else if(a==="refresh")location.reload();
   else if(window.Game)window.Game[a]();else {leaveLandscape();state={phase:"menu"};body.dataset.phase="menu";closePanel()}
@@ -263,6 +289,5 @@ function resetTouchControls(){
 window.addEventListener("game-orientationchange",resetTouchControls);
 applyOptions();
 paintMap($("#map-preview"),"preview");
-import("./world.js").then(m=>{plan=m.MAP_PLAN;paintMap($("#map-preview"),"preview");if(panel==="map")paintMap($(".large-map"),"large")}).catch(()=>{});
-const preloadGame=()=>{if(!boot)boot=import(gameModule).catch(()=>{boot=null})};
+const preloadGame=()=>loadGame().catch(()=>{});
 if("requestIdleCallback" in window)requestIdleCallback(preloadGame,{timeout:900});else setTimeout(preloadGame,150);

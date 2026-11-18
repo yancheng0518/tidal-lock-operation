@@ -11,6 +11,8 @@ The bundled glTF loader comes from the Three.js project and is covered by the MI
 
 ## First-person equipment
 
+The files in `mobile/` use these same credited character, equipment and animation assets. The geometry and animation data are preserved, and their embedded colour and material textures have been resized and re-encoded as JPEG or PNG for mobile browsers.
+
 The first-person carbine exterior uses [M4A1](https://sketchfab.com/3d-models/m4a1-40d8ef818c7549a896371cbb1f64fec6) by **Firewarden**. The sleeves and gloves use [Fps arms](https://sketchfab.com/3d-models/fps-arms-9452ce4cddde4110a4fd73e555a8e412) by **bumstrum (DJMaesen)**. The armature and static hold derive from [FPS AK-74m animations](https://sketchfab.com/3d-models/fps-ak-74m-animations-94be8385c402474cacd39bc096c6ca14) by **ccransh**. The sight housing uses [EoTech EXPS3-0 Holographic Weapon Sight Lowpoly](https://sketchfab.com/3d-models/eotech-exps3-0-holographic-weapon-sight-lowpoly-45e4fcdfb1b34756ab9e866564a12f66) by **valterjherson1**. Each is licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
 These locally bundled meshes derive from the [3d-fps adaptation at revision 130ac2a](https://github.com/cktang88/3d-fps/tree/130ac2a5c856401ec36e7d35afcfefe40c5801f4/public/assets/models). Its adaptation posed and rigged the hands, removed markings, baked ambient occlusion and converted the textures. For Tidal Lock, the exterior and hands were repacked into a self-contained glTF, the sight and carried model were simplified, and the surface finish, optical overlay, hand motion and carry animation were adapted to the demo.
