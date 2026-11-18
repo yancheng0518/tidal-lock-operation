@@ -2,7 +2,7 @@ import * as T from './vendor/three.module.js';
 
 // Issue every variant first, then wait for the driver without retaining Three's
 // material caches. Those caches are freed when a context is lost during startup.
-export async function compileScenes(renderer,cinema,environment,camera,hands,sight,isCurrent=()=>true) {
+export async function compileScenes(renderer,cinema,environment,camera,hands,sight,isCurrent=()=>true,onProgress=()=>{}) {
   if (cinema) {
     cinema.compile(environment,camera,hands,sight);
   } else {
@@ -11,10 +11,14 @@ export async function compileScenes(renderer,cinema,environment,camera,hands,sig
   }
   const gl=renderer.getContext(), extension=gl.getExtension('KHR_parallel_shader_compile');
   if (!extension) return;
-  const programs=renderer.info.programs.map(entry=>entry.program);
+  let pending=renderer.info.programs.map(entry=>entry.program);
+  const total=pending.length;
+  let last=-1;
   while (isCurrent()) {
     if (gl.isContextLost()) throw new Error('图形设备在编译期间中断。');
-    if (programs.every(program=>gl.getProgramParameter(program,extension.COMPLETION_STATUS_KHR))) return;
+    pending=pending.filter(program=>!gl.getProgramParameter(program,extension.COMPLETION_STATUS_KHR));
+    if(pending.length!==last){onProgress(total-pending.length,total);last=pending.length;}
+    if(!pending.length)return;
     await new Promise(resolve=>setTimeout(resolve,16));
   }
 }

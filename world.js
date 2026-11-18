@@ -4,7 +4,7 @@
 import { signRects } from './world-assets/yard-signs.js?v=1.3.0';
 import { MAP_PLAN } from './level.js';
 export { MAP_PLAN };
-export function buildWorld(T, scene, {onAssetLoaded}={}) {
+export function buildWorld(T, scene, {onAssetLoaded,assets}={}) {
   const root = new T.Group();
   root.name = 'Tidal Lock / civil works';
   scene.add(root);
@@ -19,9 +19,12 @@ export function buildWorld(T, scene, {onAssetLoaded}={}) {
   const dummy = new T.Object3D(), yAxis = vec(0,1,0);
   const manager = new T.LoadingManager();
   if(onAssetLoaded) manager.onProgress=onAssetLoaded;
-  const ready = new Promise(resolve=>{ manager.onLoad=resolve; });
+  const ready = new Promise((resolve,reject)=>{
+    manager.onLoad=resolve;
+    if(assets)manager.onError=()=>reject(new Error('高清场景纹理解码失败。'));
+  });
   const loader = new T.TextureLoader(manager);
-  const asset = name => new URL('./world-assets/'+name,import.meta.url).href;
+  const asset = name => assets ? assets.url('world-assets/'+name) : new URL('./world-assets/'+name,import.meta.url).href;
   const solarElevation=T.MathUtils.degToRad(26), solarAzimuth=T.MathUtils.degToRad(35);
   const sunlight=vec(Math.sin(solarAzimuth)*Math.cos(solarElevation),Math.sin(solarElevation),-Math.cos(solarAzimuth)*Math.cos(solarElevation));
   const textures = new Map();
@@ -179,10 +182,10 @@ export function buildWorld(T, scene, {onAssetLoaded}={}) {
   const apron=texture('apron-mask.jpg');
   // The harbour is static at this fixed probe. The six 256px faces store the
   // original linear radiance divided by 16 in sRGB, which also works on LDR GPUs.
-  // Reflections arrive independently of the textures needed for the first frame.
+  // The deployment waits for all six faces before showing the full-detail scene.
   const probeOrigin=vec(0,1.55,10),probeReady={value:0};
   const faceUrls=['px','nx','py','ny','pz','nz'].map(face=>asset('yard-reflection-'+face+'.webp'));
-  const yardProbe=new T.CubeTextureLoader().load(faceUrls,()=>{probeReady.value=1;});
+  const yardProbe=new T.CubeTextureLoader(assets ? manager : undefined).load(faceUrls,()=>{probeReady.value=1;});
   yardProbe.colorSpace=T.SRGBColorSpace;
   yardProbe.minFilter=T.LinearMipmapLinearFilter;yardProbe.generateMipmaps=true;
   const roadWhite=surface('#b3b2a1',.83);

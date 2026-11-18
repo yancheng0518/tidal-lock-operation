@@ -121,7 +121,7 @@ function basicWeapon(ctx,w,h,ads,reload){
   ctx.restore();
 }
 
-export function createCompatRenderer(canvas,worldData) {
+export function createCompatRenderer(canvas,worldData,onProgress=()=>{}) {
   const ctx=canvas.getContext('2d',{alpha:false});
   if(!ctx)throw new Error('浏览器无法创建二维画布');
   const backing=makeCanvas(1,1),low=backing.getContext('2d',{alpha:false});
@@ -143,35 +143,40 @@ export function createCompatRenderer(canvas,worldData) {
     backing.width=width;backing.height=height;
     frame=low.createImageData(width,height);pixels=new Uint32Array(frame.data.buffer);depth=new Float32Array(width*height);
   }
-  // Load independently: gameplay never waits for optional artwork.
+  let loaded=0;
+  // The surface map, four atlas pages, sky, guards and equipment are the complete set.
+  const total=8;
+  const completed=()=>{if(!disposed)onProgress(++loaded,total);};
   async function loadYard(){
     const response=await fetch(asset('surfaces.json'));
-    if(!response.ok)return;
+    if(!response.ok)throw new Error('港区表面数据载入失败');
     const entries=await response.json(),baked=[];
-    // Decode one atlas at a time. Larger textures never reserve a matching 2D canvas.
+    completed();
     const count=1+Math.max(...entries.map(entry=>entry[10]));
-    let complete=true;
+    // Decode one atlas at a time to keep the scratch canvas small on older phones.
     for(let i=0;i<count;i++){
       if(disposed)return;
-      try{
-        const img=await loadImage(i?'world-'+i+'.webp':'world.webp');
-        if(disposed)return;
-        const texture=imageTexture(img);
-        for(const [x,y,z,id,w,h,tx,ty,tw,th,tile] of entries){
-          if(tile===i)baked.push(rectFace(x,y,z,id,w,h,[tx,ty,tw,th],texture,0));
-        }
-        yard=baked.concat(outline);
-      }catch{complete=false}
+      const img=await loadImage(i?'world-'+i+'.webp':'world.webp');
+      if(disposed)return;
+      const texture=imageTexture(img);
+      for(const [x,y,z,id,w,h,tx,ty,tw,th,tile] of entries){
+        if(tile===i)baked.push(rectFace(x,y,z,id,w,h,[tx,ty,tw,th],texture,0));
+      }
+      completed();
     }
-    if(complete&&!disposed)yard=baked;
+    if(!disposed)yard=baked;
   }
-  loadYard().catch(()=>{});
-  loadImage('sky.jpg').then(im=>{if(disposed)return;const tex=imageTexture(im),r=160;
-    const side=im.width/4;
-    sky=axes.map(([n],i)=>rectFace(-n[0]*r,-n[1]*r,-n[2]*r,i,2*r,2*r,[side*(i%4),side*Math.floor(i/4),side,side],tex,0));
-  }).catch(()=>{});
-  loadImage('guards.webp').then(im=>{if(!disposed)guards=imageTexture(im)}).catch(()=>{});
-  loadImage('hands.webp').then(im=>{if(!disposed)hands=im}).catch(()=>{});
+  const ready=Promise.all([
+    loadYard(),
+    loadImage('sky.jpg').then(im=>{
+      if(disposed)return;
+      const tex=imageTexture(im),r=160,side=im.width/4;
+      sky=axes.map(([n],i)=>rectFace(-n[0]*r,-n[1]*r,-n[2]*r,i,2*r,2*r,[side*(i%4),side*Math.floor(i/4),side,side],tex,0));
+      completed();
+    }),
+    loadImage('guards.webp').then(im=>{if(!disposed){guards=imageTexture(im);completed();}}),
+    loadImage('hands.webp').then(im=>{if(!disposed){hands=im;completed();}})
+  ]).catch(()=>{throw new Error('港区画面资源载入失败，请检查网络后重新载入。');});
 
   // Perspective-correct scan conversion. Inverse depth is also used for the
   // visibility test, so crouching behind a low wall occludes just the lower body.
@@ -316,6 +321,6 @@ export function createCompatRenderer(canvas,worldData) {
     else if(fastFrames>=180&&quality<1){quality=Math.min(1,quality*1.1);slowFrames=fastFrames=0;resize()}
   }
   resize();
-  return {render,resize,dispose(){disposed=true;yard=[];sky=guards=hands=null;backing.width=backing.height=1}};
+  return {ready,render,resize,dispose(){disposed=true;yard=[];sky=guards=hands=null;backing.width=backing.height=1}};
 }
 

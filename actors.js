@@ -324,7 +324,7 @@ function flashTexture(T){
 }
 
 const opticAxis=.155;
-export function createWeapon(T,scene,worldScene){
+export function createWeapon(T,scene,worldScene,assets){
   const group=new T.Group();scene.add(group);
   let support,magazine,rig,sightDepth=-.061;
   if(worldScene?.environmentRotation)scene.environmentRotation.copy(worldScene.environmentRotation);
@@ -365,10 +365,11 @@ export function createWeapon(T,scene,worldScene){
   const clamp=T.MathUtils.clamp;
   let stride=0,strafe=0,turnX=0,turnY=0,ring=0,ringVelocity=0,prevFire=0,flashTime=0,shotNo=0;
   let phase=0,camReady=false,airTilt=0,landDip=0,lastShot;
-  const ready=equipment(T).then(asset=>{
+  const ready=equipment(T,assets).then(asset=>{
     rig=mountWeapon(T,group,{held:cloneSkin(asset.held),sight:asset.sight.clone(true)},muzzle,lens,opticAxis);
     sightDepth=rig.back-.008;
   }).catch(error=>{
+    if(assets)throw error;
     console.warn('Using the built-in viewmodel.',error);buildCarbine(T,group);
     support=group.getObjectByName('supportArm');magazine=group.getObjectByName('magazine');
   });
@@ -583,10 +584,11 @@ function createFallbackGuard(T,scene,index=0) {
 
 const guardSources=new WeakMap(),guardEquipment=new WeakMap();
 
-function guardSource(T){
+function guardSource(T,assets){
   if(!guardSources.has(T)){
     const src=import('./actor-assets/loader.js').then(async({GLTFLoader})=>{
-      const gltf=await new GLTFLoader().loadAsync(new URL('./actor-assets/guard.glb',import.meta.url).href);
+      const url=assets ? assets.url('actor-assets/guard.glb') : new URL('./actor-assets/guard.glb',import.meta.url).href;
+      const gltf=await new GLTFLoader().loadAsync(url);
       const source=gltf.scene,clips=new Map(gltf.animations.map(a=>[a.name,a]));
       // Calibrate to the actual upright pose, including the sole and cap, independently
       // of the file's authoring units. This binds the visual body to gameplay's capsule.
@@ -607,6 +609,7 @@ function guardSource(T){
       return {source,clips,scale,fallLift,contacts,offset:new T.Vector3(-mount.x,-bounds.min.y,-mount.z).multiplyScalar(scale)};
     });
     guardSources.set(T,src);
+    src.catch(()=>guardSources.delete(T));
   }
   return guardSources.get(T);
 }
@@ -753,13 +756,15 @@ function rigGuard(T,group,asset,prop,index){
   return update;
 }
 
-export function createEnemy(T,scene,index=0){
+export function createEnemy(T,scene,index=0,assets){
   const group=new T.Group();scene.add(group);
   const hitMeshes=[];let animate=null,lastState={};
-  const ready=Promise.all([guardSource(T),equipment(T).catch(()=>null)]).then(([asset,gear])=>{
+  const gear=equipment(T,assets);
+  const ready=Promise.all([guardSource(T,assets),assets?gear:gear.catch(()=>null)]).then(([asset,gear])=>{
     animate=rigGuard(T,group,asset,gear?.carried,index);
     group.traverse(o=>{if(o.isSkinnedMesh)hitMeshes.push(o)});
   }).catch(error=>{
+    if(assets)throw error;
     console.warn('Using the built-in patrol model.',error);
     const fallback=createFallbackGuard(T,group,index);animate=fallback.update;hitMeshes.push(...fallback.hitMeshes);
   }).then(()=>{

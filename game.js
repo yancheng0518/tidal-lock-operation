@@ -1,5 +1,6 @@
 import * as THREE from './vendor/three.core.min.js';
 import { PORT } from './level.js';
+import { loadSceneAssets } from './scene-assets.js';
 import { createCompatRenderer } from './compat-renderer.js?v=1.3.0';
 import { createAudio } from './audio.js';
 import { PlayerMotor } from './motor.js';
@@ -33,7 +34,9 @@ let crouchHeld = false, crouchBlend = 0;
 let sensitivity = 1, raf = 0, previous = 0, nextState = 0, hadLock = false;
 let aimSensitivity = .65, fieldOfView = 72;
 let errorMessage = '', runtime = 0;
-let graphicsStarted = false;
+let graphicsTask=null, launchNumber=0, download=null;
+let lastProgress={stage:'prepare',label:'正在准备场景',loaded:0,total:0,percent:0};
+let refreshDeadline=null;
 let compat, graphicsContext, graphicsEpoch=0, interruptWarmup=null, shaderFailure='';
 const tracers = [], sparks = [];
 let tracerIndex = 0, sparkIndex = 0, sparkObject;
@@ -99,18 +102,49 @@ function initSimulation() {
   initEffects();
 }
 
-async function warmWebGL(epoch,onProgress) {
-  const context = canvas.getContext('webgl2',{alpha:false,antialias:true,powerPreference:'high-performance'})
-    || canvas.getContext('webgl2',{alpha:false,antialias:true})
-    || canvas.getContext('webgl2',{alpha:false});
-  if (!context || context.isContextLost()) throw new Error('浏览器未能创建 WebGL 2 上下文。');
-  graphicsContext=context;
+function reportLoading(stage,label,percent,stats={}) {
+  lastProgress={stage,label,loaded:0,total:0,...stats,percent:Math.round(percent)};
+  refreshDeadline?.();
+  if(phase==='loading')emit('game-loading',lastProgress);
+}
+
+// Overall completion counts the original resources plus assembly, shaders and first frame.
+function reportGPU(stage,label,completedUnits,stats) {
+  reportLoading(stage,label,Math.min(99,100*completedUnits/(stats.total+3)),stats);
+}
+function reportDownload(stats) {
+  const ratio=stats.totalBytes ? stats.loadedBytes/stats.totalBytes : 0;
+  reportGPU('assets','正在下载高清场景与装备',stats.total*ratio,stats);
+}
+function getDownload() {
+  if(download)return download;
+  const job={controller:new AbortController(),stats:{loaded:0,total:0,loadedBytes:0,totalBytes:0}};
+  download=job;
+  job.promise=loadSceneAssets(stats=>{
+    if(download!==job)return;
+    job.stats=stats;
+    if(phase==='loading' || refreshDeadline)reportDownload(stats);
+  },{signal:job.controller.signal});
+  // An idle prefetch failure can be retried when the player chooses to deploy.
+  job.promise.catch(()=>{if(download===job)download=null;});
+  return job;
+}
+function releaseDownload() {
+  const job=download;
+  if(!job)return;
+  download=null;
+  job.controller.abort();
+  job.promise.then(assets=>assets.dispose(),()=>{});
+}
+
+async function warmWebGL(epoch,context,assets,stats) {
   const [T,{buildWorld},{createWeapon,createEnemy},{createCinema,compileScenes}]=await Promise.all([
     import('./vendor/three.module.js'), import('./world.js?v=1.3.0'), import('./actors.js?v=1.3.0'),
     import('./cinema.js?v=1.3.0')
   ]);
   if(epoch!==graphicsEpoch) return;
-  onProgress();
+  reportGPU('prepare','正在组装港区与装备',stats.total,stats);
+  shaderFailure='';
   renderer=new T.WebGLRenderer({canvas,context,alpha:false});
   maxBufferSide=Math.min(renderer.capabilities.maxTextureSize,context.getParameter(context.MAX_RENDERBUFFER_SIZE));
   renderer.debug.onShaderError=(gl,program)=>{
@@ -122,10 +156,10 @@ async function warmWebGL(epoch,onProgress) {
   renderer.toneMapping=T.ACESFilmicToneMapping;renderer.toneMappingExposure=1.02;
   renderer.outputColorSpace=T.SRGBColorSpace;renderer.autoClear=false;
   cinema=createCinema(renderer);
-  world=buildWorld(T,scene,{supportsHDR:renderer.extensions.has('EXT_color_buffer_float'),onAssetLoaded:onProgress});
-  weapon=createWeapon(T,gunScene,scene);
+  world=buildWorld(T,scene,{assets,onAssetLoaded:()=>{if(epoch===graphicsEpoch)refreshDeadline?.();}});
+  weapon=createWeapon(T,gunScene,scene,assets);
   for(const e of enemies){
-    const art=createEnemy(T,scene,e.index);
+    const art=createEnemy(T,scene,e.index,assets);
     art.group.position.copy(e.group.position);art.group.quaternion.copy(e.group.quaternion);
     Object.assign(e,art);
     e.update(0,{moving:e.moving,time:elapsed,hit:e.hit,dead:e.hp<=0});
@@ -133,12 +167,15 @@ async function warmWebGL(epoch,onProgress) {
   resize();updateCamera();
   await Promise.all([world.ready,weapon.ready,...enemies.map(e=>e.ready)]);
   if(epoch!==graphicsEpoch)return;
-  onProgress();
+  reportGPU('shaders','正在编译光影效果',stats.total+1,stats);
   gunScene.environment=scene.environment;gunScene.environmentIntensity=.30;
-  await compileScenes(renderer,cinema,scene,camera,gunScene,gunCamera,()=>epoch===graphicsEpoch);
+  await compileScenes(renderer,cinema,scene,camera,gunScene,gunCamera,()=>epoch===graphicsEpoch,(done,total)=>{
+    if(epoch===graphicsEpoch && total)
+      reportGPU('shaders','正在编译光影效果',stats.total+1+done/total,stats);
+  });
   if(epoch!==graphicsEpoch)return;
   if(context.isContextLost())throw new Error('浏览器在准备三维画面时释放了图形设备。');
-  // Draw behind the playable canvas. Switch only after the driver has accepted a frame.
+  reportGPU('frame','正在绘制第一帧',stats.total+2,stats);
   updateWeapon(1);
   renderWebGL();
   const glError=context.getError();
@@ -152,12 +189,7 @@ async function warmWebGL(epoch,onProgress) {
   announce();
 }
 
-function useCompat(reason) {
-  if(!motor)return;
-  canvas.dataset.renderer='compat';
-  graphicsEpoch++;
-  interruptWarmup?.(new Error('已切换至兼容画面。'));
-  if(reason) console.warn('使用轻量兼容画面',reason);
+function disposeGPU(releaseContext) {
   // Keep the simulation and input surface alive when a driver or asset fails mid-round.
   for(const e of enemies){
     const group=new THREE.Group();
@@ -168,15 +200,30 @@ function useCompat(reason) {
     try { world.dispose?.(); } catch { /* A lost context can already be invalid. */ }
     try { renderer.dispose(); } catch { /* Already lost. */ }
   }
-  try { if(graphicsContext && !graphicsContext.isContextLost()) graphicsContext.getExtension('WEBGL_lose_context')?.loseContext(); } catch {}
+  try { if(releaseContext && graphicsContext && !graphicsContext.isContextLost()) graphicsContext.getExtension('WEBGL_lose_context')?.loseContext(); } catch {}
   graphicsContext=null;
   renderer=cinema=weapon=null;
   world=PORT;scene.clear();scene.environment=scene.background=null;gunScene.clear();gunScene.environment=null;
   canvas.width=canvas.height=1;
-  if(!compat)compat=createCompatRenderer(compatFrame,PORT);
+  // These pooled effects belong to the simulation and can be reused on a retry.
+  for(const tracer of tracers)scene.add(tracer.line);
+  scene.add(sparkObject);
+}
+
+async function prepareSoftware(epoch) {
+  releaseDownload();
+  canvas.dataset.renderer='preparing-software';
+  disposeGPU(true);
+  reportLoading('fallback','正在准备设备支持的港区画面',0);
+  compat=createCompatRenderer(compatFrame,PORT,(loaded,total)=>{
+    if(epoch===graphicsEpoch)reportLoading('fallback','正在载入港区画面',100*loaded/(total+1),{loaded,total});
+  });
+  await compat.ready;
+  if(epoch!==graphicsEpoch)return;
+  reportLoading('frame','正在绘制第一帧',99,{loaded:lastProgress.loaded,total:lastProgress.total});
   compatFrame.hidden=false;
-  resize();
-  if(phase!=='loading' && phase!=='menu'){render();announce();}
+  resize();render();
+  canvas.dataset.renderer='compat';
 }
 
 function initEffects() {
@@ -619,12 +666,23 @@ function resetWeapon(){
 }
 
 function recoverGraphics(reason) {
-  if(!compat){
-    try{useCompat(reason);return true;}
-    catch(err){reason=err;}
+  if(canvas.dataset.renderer!=='webgl'){
+    errorMessage=reason?.message || String(reason);
+    finish('error');
+    return false;
   }
-  errorMessage=reason?.message || String(reason);
-  console.error(reason);finish('error');return false;
+  // A lost GPU must not cost health while the replacement art is loading.
+  const ticket=++launchNumber;
+  const shouldEnter=phase==='playing' || phase==='loading';
+  const previousPhase=phase;
+  finish('loading');
+  graphicsTask=prepareGraphics(true);
+  graphicsTask.then(()=>{
+    if(ticket!==launchNumber || phase!=='loading')return;
+    if(shouldEnter)return enterReadyRound(ticket);
+    else finish(previousPhase);
+  }).catch(error=>showLaunchError(ticket,error));
+  return false;
 }
 
 const pendingKey='tidal-3d-launch-1.3';
@@ -639,46 +697,120 @@ function lastLaunchInterrupted() {
   } catch {return false;}
 }
 
-async function prepareGraphics() {
+async function prepareGraphics(forceSoftware=false) {
   const epoch=++graphicsEpoch;
-  let timer;
-  const interrupted=new Promise((_,reject)=>{
-    interruptWarmup=reject;
-  });
-  function onProgress() {
-    if(epoch!==graphicsEpoch || !interruptWarmup)return;
+  let timer, retryWithSoftware=false;
+  const interrupted=new Promise((_,reject)=>{interruptWarmup=reject;});
+  refreshDeadline=()=>{
     clearTimeout(timer);
-    timer=setTimeout(()=>interruptWarmup?.(new Error('3D 场景加载超时。')),45000);
-  }
-  try{
+    timer=setTimeout(()=>interruptWarmup?.(new Error('载入长时间没有进展，请检查网络后重试。')),60000);
+  };
+  async function load() {
+    const skipGPU=forceSoftware || (compact && lastLaunchInterrupted());
+    let context=null;
+    if(!skipGPU){
+      try{
+        context=canvas.getContext('webgl2',{alpha:false,antialias:true,powerPreference:'high-performance'})
+          || canvas.getContext('webgl2',{alpha:false,antialias:true})
+          || canvas.getContext('webgl2',{alpha:false});
+      }catch{/* The browser can prohibit creating a GPU context. */}
+    }
+    if(!context || context.isContextLost()){
+      await prepareSoftware(epoch);
+      return;
+    }
+    graphicsContext=context;
+    canvas.dataset.renderer='preparing';
+    const job=getDownload();
+    reportDownload(job.stats);
+    let assets;
+    try {
+      assets=await job.promise;
+    } catch(error) {
+      console.warn('高清资源下载中断',error);
+      throw new Error('高清场景与装备未能完整下载，请检查网络后重新载入。');
+    }
+    if(epoch!==graphicsEpoch)return;
     if(compact){try{sessionStorage.setItem(pendingKey,String(Date.now()));}catch{}}
-    onProgress();
-    await Promise.race([warmWebGL(epoch,onProgress),interrupted]);
-    if(epoch===graphicsEpoch && phase==='loading')resume(false);
-  }catch(err){
-    if(epoch===graphicsEpoch){
-      try {
-        useCompat(err);
-        if(phase==='loading'){render();resume(false);}
-      } catch(failure) {
-        errorMessage=failure.message || String(failure);
-        finish('error');
-      }
+    try {
+      await warmWebGL(epoch,context,assets,job.stats);
+    } finally {
+      if(download===job)download=null;
+      assets.dispose();
+    }
+  }
+  refreshDeadline();
+  try{
+    await Promise.race([load(),interrupted]);
+  }catch(error){
+    retryWithSoftware=!!graphicsContext && (graphicsContext.isContextLost() ||
+      lastProgress.stage==='shaders' || lastProgress.stage==='frame');
+    graphicsEpoch++;
+    releaseDownload();
+    if(compat){compat.dispose();compat=null;compatFrame.hidden=true;}
+    disposeGPU(retryWithSoftware);
+    delete canvas.dataset.renderer;
+    if(!retryWithSoftware){
+      graphicsTask=null;
+      throw error;
     }
   }finally{
-    clearTimeout(timer);interruptWarmup=null;
+    clearTimeout(timer);refreshDeadline=null;interruptWarmup=null;
     clearPendingLaunch();
   }
+  if(retryWithSoftware)await prepareGraphics(true);
 }
 
-function start() {
+function showLaunchError(ticket,error) {
+  if(ticket!==launchNumber || phase!=='loading')return;
+  errorMessage=error.message || '场景未能载入，请重新载入。';
+  finish('error');
+}
+
+async function waitForFrame(context,ticket) {
+  const fence=context.fenceSync(context.SYNC_GPU_COMMANDS_COMPLETE,0);
+  if(!fence)throw new Error('图形设备未能提交首帧。');
+  const start=performance.now();
+  context.flush();
+  try{
+    while(ticket===launchNumber && !context.isContextLost()){
+      const status=context.clientWaitSync(fence,0,0);
+      if(status===context.ALREADY_SIGNALED || status===context.CONDITION_SATISFIED)return;
+      if(status===context.WAIT_FAILED || performance.now()-start>15000)throw new Error('图形设备未能完成首帧绘制。');
+      await new Promise(resolve=>setTimeout(resolve,16));
+    }
+    if(context.isContextLost())throw new Error('图形设备已中断。');
+  }finally{if(!context.isContextLost())context.deleteSync(fence);}
+}
+
+async function enterReadyRound(ticket) {
+  if(ticket!==launchNumber || phase!=='loading')return;
+  if(renderer)renderer.shadowMap.needsUpdate=true;
+  try{
+    resize();render();
+    if(canvas.dataset.renderer==='webgl')await waitForFrame(graphicsContext,ticket);
+  }catch(error){
+    if(ticket!==launchNumber)return;
+    if(canvas.dataset.renderer==='webgl'){recoverGraphics(error);return;}
+    throw error;
+  }
+  if(ticket!==launchNumber || phase!=='loading')return;
+  reportLoading('done','港区已就绪',100,{loaded:lastProgress.loaded,total:lastProgress.total});
+  // Expose the finished first frame before the simulation starts its clock.
+  await new Promise(resolve=>setTimeout(resolve,0));
+  if(ticket!==launchNumber || phase!=='loading')return;
+  if(document.hidden)finish('paused');
+  else resume();
+}
+
+async function start() {
   if(phase==='loading')return;
+  const ticket=++launchNumber;
   clearInput();
   lockRetryUsed=false;
   phase='loading';errorMessage='';
-  announce();
   try {
-    audio.unlock();lock();
+    audio.unlock();
     initSimulation();
     motor.reset();
     player.set(0,eye,22);
@@ -697,38 +829,24 @@ function start() {
     const buf=sparkObject.geometry.attributes.position;
     sparks.forEach((p,i)=>{p.life=0; buf.setXYZ(i,0,-999,0);}); buf.needsUpdate=true;
     updateCamera();
-    if(!graphicsStarted) {
-      graphicsStarted=true;
-      const skipGPU=compact && lastLaunchInterrupted();
-      clearPendingLaunch();
-      canvas.dataset.renderer=skipGPU?'compat':'preparing';
-      try {
-        compat=createCompatRenderer(compatFrame,PORT);
-        compatFrame.hidden=false;
-      } catch(error) {
-        if(skipGPU)throw error;
-        // Some embedded browsers only provide a WebGL canvas.
-        console.warn('启动画布不可用，正在准备三维场景。',error);
-      }
-      // Leave a paint opportunity before a driver compiles shaders on the main thread.
-      if(!skipGPU) {
-        requestAnimationFrame(()=>setTimeout(prepareGraphics,0));
-      }
+    resetWeapon();
+    announce();
+    if(canvas.dataset.renderer==='webgl' || canvas.dataset.renderer==='compat'){
+      reportLoading('frame','正在绘制第一帧',99);
+    } else if(graphicsTask){
+      emit('game-loading',lastProgress);
+    } else {
+      reportLoading('prepare','正在准备场景',0);
+      graphicsTask=prepareGraphics();
     }
-    if(renderer)renderer.shadowMap.needsUpdate=true;
-    resize();resetWeapon();
-    if(compat || canvas.dataset.renderer==='webgl') {
-      render();
-      resume(false);
-    }
-  } catch(err) {
-    errorMessage=err.message || String(err);console.error(err);finish('error');
-  }
+    await graphicsTask;
+    await enterReadyRound(ticket);
+  }catch(error){showLaunchError(ticket,error);}
 }
 
 function pause() { if(phase==='playing') finish('paused'); }
 function resume(requestLock=true) {
-  if(phase!=='paused' && phase!=='loading') return;
+  if(phase!=='paused' && !(phase==='loading' && lastProgress.stage==='done')) return;
   phase='playing';
   audio.unlock(); audio.active(true);
   if(requestLock) { lockRetryUsed=false; lock(); }
@@ -738,7 +856,7 @@ function resume(requestLock=true) {
   canvas.focus({preventScroll:true});
   raf=requestAnimationFrame(frame);
 }
-function menu() { finish('menu'); }
+function menu() { launchNumber++;finish('menu'); }
 
 function look(dx,dy) {
   if(phase!=='playing') return;
@@ -853,7 +971,7 @@ window.addEventListener('game-orientationchange',()=>{
 });
 canvas.addEventListener('webglcontextlost',e=>{
   e.preventDefault();
-  if(!motor || canvas.dataset.renderer==='compat')return;
+  if(!motor || !graphicsContext || canvas.dataset.renderer==='compat' || canvas.dataset.renderer==='preparing-software')return;
   const reason=new Error('图形设备的上下文已被浏览器释放。');
   if(interruptWarmup)interruptWarmup(reason);
   else recoverGraphics(reason);
@@ -873,3 +991,12 @@ window.Game={
 };
 emit('game-ready',{});
 announce();
+
+// Use time spent reading the briefing to download the exact files needed for deployment.
+function prefetchScene() {
+  if(phase!=='menu' || graphicsTask || document.hidden || !window.WebGL2RenderingContext ||
+     navigator.connection?.saveData || lastLaunchInterrupted())return;
+  getDownload();
+}
+if(window.requestIdleCallback)requestIdleCallback(prefetchScene,{timeout:1500});
+else setTimeout(prefetchScene,350);

@@ -75,7 +75,8 @@ function showPanel(id,tag,title,html,closeable=true){
   if(popup.hidden)lastFocus=document.activeElement;
   panel=id;popup.dataset.panel=id;$("#dlg-tag").textContent=tag;$("#dlg-title").textContent=title;
   $("#dlg-body").innerHTML=html;$("#closePopup").hidden=!closeable;popup.hidden=false;
-  const first=popup.querySelector("button:not([hidden]),input");if(first)first.focus({preventScroll:true});
+  const focusTarget=id==="loading"?$("#dlg-title"):popup.querySelector("button:not([hidden]),input");
+  focusTarget?.focus({preventScroll:true});
 }
 const row=(term,value)=>'<div class="row"><dt>'+term+'</dt><dd>'+value+'</dd></div>';
 const key=t=>'<kbd>'+t+'</kbd>';
@@ -104,10 +105,43 @@ function drawPanel(id){
 
   }
 }
+let loadTimer, lastProgress;
+function updateLoading({stage,label,loaded=0,total=0,loadedBytes=0,totalBytes=0,percent=0}){
+  if(panel!=="loading" || state.phase!=="loading")return;
+  const value=stage==="done"?100:Math.min(99,Math.max(0,Math.round(percent)));
+  const key=[stage,label,loaded,total,loadedBytes,totalBytes,value].join("|");
+  if(lastProgress===key)return;
+  lastProgress=key;
+  const stageLabel=$("#load-stage"),count=$("#load-assets"),bytes=$("#load-bytes"),bar=$("#load-progress");
+  if(stageLabel.textContent!==label)stageLabel.textContent=label;
+  count.textContent=total>0?"资源 "+loaded+" / "+total:"";
+  bytes.hidden=stage!=="assets" || totalBytes<=0;
+  if(!bytes.hidden)bytes.textContent="已读取 "+(loadedBytes/1e6).toFixed(1)+" / "+(totalBytes/1e6).toFixed(1)+" MB";
+  bar.value=value;
+  $("#load-percent").textContent=value+"%";
+  const notice=$("#load-notice"), retry=$("#load-retry");
+  notice.hidden=true;
+  retry.hidden=true;
+  clearTimeout(loadTimer);
+  if(stage!=="done")loadTimer=setTimeout(()=>{
+    notice.textContent=stage==="assets"?"仍在等待资源响应。网络恢复后会继续载入。":"这一步耗时较长，可以继续等待。";
+    notice.hidden=false;
+    retry.hidden=false;
+  },12000);
+}
+window.addEventListener("game-loading",event=>updateLoading(event.detail));
 function phasePanel(phase){
+  clearTimeout(loadTimer);
+  lastProgress=null;
   if(phase==="playing"||phase==="menu"){closePanel();return}
   if(phase==="loading"){
-    showPanel(phase,"DEPLOYMENT","正在进入潮闸港区",'<p>正在载入场景与装备。</p><div class="loadline"></div>',false);
+    showPanel(phase,"DEPLOYMENT","正在进入潮闸港区",
+      '<div class="load-summary"><span id="load-stage" role="status"></span><strong id="load-percent" aria-hidden="true">0%</strong></div>'+
+      '<progress id="load-progress" max="100" value="0" aria-label="部署进度" aria-describedby="load-stage load-assets load-bytes"></progress>'+
+      '<div class="load-footer"><div class="load-amount"><span id="load-assets"></span><span id="load-bytes" hidden></span></div><div class="load-actions">'+
+      '<button id="load-retry" data-action="refresh" hidden>重新载入</button>'+action("menu","返回部署")+
+      '</div></div><p id="load-notice" role="status" hidden></p>',false);
+    updateLoading({stage:"prepare",label:"正在准备场景",percent:0});
     return;
   }
   if(phase==="paused"){showPanel(phase,"OPERATION PAUSED","行动已暂停",'<p>已清除 '+state.kills+' / '+state.total+' 名守卫。</p><div class="actions">'+action("resume","继续行动")+action("settings","操控与画面")+action("restart","重新开始")+action("menu","返回部署")+'</div>',false);return}
@@ -141,11 +175,8 @@ function paintCompass(heading){
   c.globalAlpha=1;c.fillStyle="#1b2424a8";c.fillRect(mid-25,35,50,23);
   c.font="bold 18px Consolas,monospace";c.fillStyle="#ffcc74";c.fillText(String(Math.round(heading)%360).padStart(3,"0"),mid,53);
 }
-let preparingSince=null;
 function displayGame(s){
   const changed=state.phase!==s.phase;state=s;body.dataset.phase=s.phase;
-  if(s.rendererMode==="preparing")preparingSince??=performance.now();else preparingSince=null;
-  $("#scene-preparing").hidden=s.phase!=="playing" || preparingSince===null || performance.now()-preparingSince>10000;
   hud.hidden=!["playing","paused","won","lost"].includes(s.phase);
   if(changed){
     if(s.phase==="menu")leaveLandscape();
@@ -194,7 +225,7 @@ window.addEventListener("keydown",e=>{
   if(e.key==="Escape"&&!$("#closePopup").hidden){dismissPanel();e.preventDefault()}
   if(e.key==="Tab"){const items=[...popup.querySelectorAll("button:not([hidden]),input,select")];
     if(!items.length){e.preventDefault();return}
-    if(e.shiftKey&&document.activeElement===items[0]){e.preventDefault();items.at(-1).focus()}
+    if(e.shiftKey&&(document.activeElement===items[0]||document.activeElement.id==="dlg-title")){e.preventDefault();items.at(-1).focus()}
     else if(!e.shiftKey&&document.activeElement===items.at(-1)){e.preventDefault();items[0].focus()}}
 });
 $("#sound").onclick=()=>{muted=!muted;applyOptions()};$("#pause").onclick=()=>window.Game?.pause();

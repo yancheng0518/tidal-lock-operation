@@ -1,12 +1,12 @@
 // Shared local PBR model and authored hand pose. The carried LOD reuses the first-person materials.
 const sources = new WeakMap();
 
-export function equipment(T) {
+export function equipment(T,assets) {
   if (!sources.has(T)) {
     const resource = import('./loader.js').then(async ({ GLTFLoader }) => {
       const loader = new GLTFLoader();
       const [rifle, optic] = await Promise.all(['carbine.glb', 'reflex.glb'].map(file =>
-        loader.loadAsync(new URL('./actor-assets/'+file, document.baseURI).href)));
+        loader.loadAsync(assets ? assets.url('actor-assets/'+file) : new URL('./actor-assets/'+file, document.baseURI).href)));
       const held = rifle.scene.getObjectByName('FP_m4a1');
       const carried = rifle.scene.getObjectByName('CarriedProp');
       const sight = optic.scene.getObjectByName('HoloOptic');
@@ -36,6 +36,7 @@ export function equipment(T) {
       return { held, carried, sight };
     });
     sources.set(T, resource);
+    resource.catch(()=>sources.delete(T));
   }
   return sources.get(T);
 }
