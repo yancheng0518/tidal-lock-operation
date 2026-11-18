@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#101414"><title>潮闸行动 · TIDAL LOCK</title><link rel="icon" href="icon.svg" type="image/svg+xml"><link rel="stylesheet" href="style.css"></head>
+<body data-phase="menu">
+<svg class="symbols" xmlns="http://www.w3.org/2000/svg"><defs>
+<symbol id="i-brand" viewBox="0 0 40 34"><path fill="currentColor" stroke="none" d="M2 29 17 3h9L11 29zm13 0 8-14 5 8-4 6zm11-17 5-9 8 14-5 9z"/></symbol>
+<symbol id="i-deploy" viewBox="0 0 24 24"><path d="m3 10 18-7-7 18-3-8-8-3Zm8 3 6-6"/></symbol>
+<symbol id="i-cross" viewBox="0 0 24 24"><path d="M12 2v5m0 10v5M2 12h5m10 0h5"/><circle cx="12" cy="12" r="7"/></symbol>
+<symbol id="i-map" viewBox="0 0 24 24"><path d="m3 5 6-2 6 3 6-2v15l-6 2-6-3-6 2zm6-2v15m6-12v15"/></symbol>
+<symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h15m-6-6 6 6-6 6"/></symbol>
+<symbol id="i-audio" viewBox="0 0 24 24"><path d="M3 9v6h4l5 4V5L7 9H3Zm13-1c3 2 3 6 0 8m3-11c5 4 5 10 0 14"/></symbol>
+<symbol id="i-mute" viewBox="0 0 24 24"><path d="M3 9v6h4l5 4V5L7 9H3Zm13 0 6 6m0-6-6 6"/></symbol>
+<symbol id="i-gear" viewBox="0 0 24 24"><path d="m9 3 6 0 1 3 3 1 2 5-2 4-3 1-1 4H9l-1-4-3-1-2-4 2-5 3-1z"/><circle cx="12" cy="12" r="3"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 6v6l4 2"/></symbol>
+<symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 21V4m0 1c5-4 9 4 15 0v10c-6 4-10-4-15 0"/></symbol>
+<symbol id="i-person" viewBox="0 0 24 24"><circle cx="12" cy="7" r="3.5"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></symbol>
+<symbol id="i-expand" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-8 8M4 14v6h6"/></symbol>
+<symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12m0-12L6 18"/></symbol>
+<symbol id="i-keys" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="1"/><path d="M5 9h2m2 0h2m2 0h2m2 0h2M6 12h2m3 0h2m2 0h2m-9 4h8"/></symbol>
+<symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 4v16M16 4v16" stroke-width="3"/></symbol>
+</defs></svg>
+<main id="lobby">
+<header class="topbar"><div class="brand"><svg><use href="#i-brand"/></svg><div>哨界<span>FIELD OPS</span></div></div>
+<nav aria-label="任务终端"><button class="nav-selected" id="homeNav">任务部署</button><button data-panel="map">战区地图</button><button data-panel="help">操作手册</button></nav>
+<div class="utilities"><span class="system"><i></i>终端就绪</span><b></b><button id="sound" class="icon-button" title="切换音效" aria-label="切换音效"><svg><use href="#i-audio"/></svg></button><button class="icon-button" data-panel="settings" title="设置" aria-label="设置"><svg><use href="#i-gear"/></svg></button></div></header>
+<section class="stage" aria-label="潮闸行动部署">
+<div class="scene-art"></div><div class="stage-shade"></div>
+<div class="image-id"><span class="thin-dash"></span> SECTOR 07 <span>/</span> COASTAL FACILITY</div>
+<div class="briefing">
+<div class="eyebrow"><span class="slats"></span> 作战简报 <i></i> MISSION BRIEFING</div>
+<h1 lang="en">TIDAL LOCK</h1><h2>潮闸行动</h2>
+<p class="summary">敌方守卫已封锁潮闸港区。穿过装卸场，清除闸门和泵站附近的守卫，夺回闸区控制权。</p>
+<div class="metadata"><div><span><svg><use href="#i-flag"/></svg>行动类型</span><strong>区域清剿</strong></div><div><span><svg><use href="#i-cross"/></svg>敌对目标</span><strong>06 <small>名守卫</small></strong></div><div><span><svg><use href="#i-person"/></svg>部署规模</span><strong>单人行动</strong></div></div>
+<button id="deploy" class="deploy"><svg><use href="#i-deploy"/></svg><span>开始行动</span><svg class="tail"><use href="#i-arrow"/></svg></button>
+</div>
+<button id="map-card" class="map-card" data-panel="map" aria-label="展开潮闸港区战区地图"><div class="map-head"><span><i></i> 区域概览</span><svg><use href="#i-expand"/></svg></div><div class="map-graphic"><canvas id="map-preview" width="480" height="196"></canvas><span class="map-n">N ▴</span></div><div class="map-caption"><span>潮闸港区</span><small>SECTOR <b>07</b></small></div></button>
+</section>
+<footer><div class="foot-left"><span class="live-dot"></span> 本地任务系统<span class="foot-slash">/</span><span class="muted">PVE SIMULATION</span></div><button data-panel="help"><svg><use href="#i-keys"/></svg> 操作说明</button><span class="build">BUILD 1.2.0</span></footer>
+</main>
+<canvas id="game" tabindex="-1" aria-label="第一人称游戏画面"></canvas>
+<div id="hud" hidden><div class="compass"><canvas id="bearing" width="640" height="62" aria-label="罗盘"></canvas><b>▴</b></div>
+<div class="mission-hud"><div class="radar-box"><canvas id="radar" width="300" height="240" aria-label="战区雷达"></canvas><b class="map-north">N</b><span class="zone-name">潮闸港区</span></div><div class="assignment"><svg><use href="#i-cross"/></svg><strong>清除港区守卫</strong><div id="objective"></div></div></div>
+<div class="hud-right"><time id="timer">00:00</time><button id="pause" class="icon-button" aria-label="暂停"><svg><use href="#i-pause"/></svg></button></div>
+<div class="reticle" aria-hidden="true"><i></i></div><div id="impact"></div>
+<div class="health"><div class="vitals-line"><b class="med-cross">✚</b><span id="stance">站立</span><strong id="hp">100</strong><small>HP</small></div><div class="hp-track"><i></i></div></div>
+<div class="ammo"><div class="weapon-meta"><i></i><span>AR–04</span><small>全自动</small></div><div class="ammo-count"><strong id="rounds">30</strong><small> / <b id="reserve">150</b></small></div></div>
+<div id="feed" aria-live="polite"></div><div id="reloadHint"></div><div id="damage"></div><div class="damage-ring"><i></i></div>
+<div id="touch"><div id="stick"><i></i></div>
+<div class="touch-lean"><button id="touchLeanLeft" aria-label="左探头" aria-pressed="false">左探</button><button id="touchLeanRight" aria-label="右探头" aria-pressed="false">右探</button></div>
+<div class="touch-actions"><button id="touchAim">瞄准</button><button id="touchJump">跳跃</button><button id="touchFire">射击</button><button id="touchCrouch">下蹲</button><button id="touchReload">换弹</button></div></div></div>
+<div id="popup" hidden><section class="dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-title"><header><div><small id="dlg-tag"></small><h2 id="dlg-title"></h2></div><button id="closePopup" class="icon-button" aria-label="关闭"><svg><use href="#i-close"/></svg></button></header><div id="dlg-body"></div></section></div>
+<script src="ui.js" defer></script></body></html>
