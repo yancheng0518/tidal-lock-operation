@@ -24,3 +24,5 @@ The storm-break panorama combines Industrial Sunset and Drackenstein Quarry with
 The images in `mobile/` are smaller JPEG encodings of the same credited surface maps, dam elevation, panorama and spray mask. The mobile environment lighting texture `harbour-ibl.png` was prefiltered from that panorama.
 
 The full-resolution environment lighting in `harbour-ibl.webp` was prefiltered from the storm-break panorama. The `yard-signs.webp` atlas preserves the original painted lettering and weathering of the port.
+
+The six yard reflection faces were captured from the static harbour scene at its original probe position and resolution.

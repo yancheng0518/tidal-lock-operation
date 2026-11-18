@@ -6,7 +6,7 @@ export function equipment(T) {
     const resource = import('./loader.js').then(async ({ GLTFLoader }) => {
       const loader = new GLTFLoader();
       const [rifle, optic] = await Promise.all(['carbine.glb', 'reflex.glb'].map(file =>
-        loader.loadAsync(new URL('./'+file, import.meta.url).href)));
+        loader.loadAsync(new URL('./actor-assets/'+file, document.baseURI).href)));
       const held = rifle.scene.getObjectByName('FP_m4a1');
       const carried = rifle.scene.getObjectByName('CarriedProp');
       const sight = optic.scene.getObjectByName('HoloOptic');

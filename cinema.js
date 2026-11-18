@@ -1,5 +1,24 @@
 import * as T from './vendor/three.module.js';
 
+// Issue every variant first, then wait for the driver without retaining Three's
+// material caches. Those caches are freed when a context is lost during startup.
+export async function compileScenes(renderer,cinema,environment,camera,hands,sight,isCurrent=()=>true) {
+  if (cinema) {
+    cinema.compile(environment,camera,hands,sight);
+  } else {
+    renderer.compile(environment,camera);
+    renderer.compile(hands,sight);
+  }
+  const gl=renderer.getContext(), extension=gl.getExtension('KHR_parallel_shader_compile');
+  if (!extension) return;
+  const programs=renderer.info.programs.map(entry=>entry.program);
+  while (isCurrent()) {
+    if (gl.isContextLost()) throw new Error('图形设备在编译期间中断。');
+    if (programs.every(program=>gl.getProgramParameter(program,extension.COMPLETION_STATUS_KHR))) return;
+    await new Promise(resolve=>setTimeout(resolve,16));
+  }
+}
+
 // Keep colour in scene-linear units up to the last pass, including the hands.
 // Only depth from the world camera is used for contact shadows.
 export function createCinema(renderer) {
@@ -114,6 +133,22 @@ export function createCinema(renderer) {
       #include <colorspace_fragment>
     }
   `,true);
+  function compile(environment,camera,hands,sight) {
+    // Materials compiled for the default framebuffer use a different tone map
+    // and colour space from the scene-linear offscreen passes.
+    const previous=renderer.getRenderTarget();
+    try {
+      renderer.setRenderTarget(world);
+      renderer.compile(environment,camera);renderer.compile(hands,sight);
+      for (const material of [ao,copy,prefilter,blur,output]) {
+        renderer.setRenderTarget(material===output ? null : plate);
+        triangle.material=material;
+        renderer.compile(scene,ortho);
+      }
+    } finally {
+      renderer.setRenderTarget(previous);
+    }
+  }
   function draw(target, material) {
     renderer.setRenderTarget(target);
     triangle.material=material;
@@ -140,5 +175,5 @@ export function createCinema(renderer) {
     blur.uniforms.source.value=soft.texture;blur.uniforms.axis.value.set(0,1.35/soft.height);draw(bright,blur);
     draw(null,output);
   }
-  return {render};
+  return {render,compile};
 }

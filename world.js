@@ -4,7 +4,7 @@
 import { signRects } from './world-assets/yard-signs.js?v=1.3.0';
 import { MAP_PLAN } from './level.js';
 export { MAP_PLAN };
-export function buildWorld(T, scene, {supportsHDR=true, onAssetLoaded}={}) {
+export function buildWorld(T, scene, {onAssetLoaded}={}) {
   const root = new T.Group();
   root.name = 'Tidal Lock / civil works';
   scene.add(root);
@@ -19,18 +19,33 @@ export function buildWorld(T, scene, {supportsHDR=true, onAssetLoaded}={}) {
   const dummy = new T.Object3D(), yAxis = vec(0,1,0);
   const manager = new T.LoadingManager();
   if(onAssetLoaded) manager.onProgress=onAssetLoaded;
-  const ready = new Promise((resolve,reject)=>{
-    manager.onLoad=resolve;
-    manager.onError=url=>reject(new Error('港区纹理加载失败 '+url.split('/').pop()));
-  });
+  const ready = new Promise(resolve=>{ manager.onLoad=resolve; });
   const loader = new T.TextureLoader(manager);
   const asset = name => new URL('./world-assets/'+name,import.meta.url).href;
   const solarElevation=T.MathUtils.degToRad(26), solarAzimuth=T.MathUtils.degToRad(35);
   const sunlight=vec(Math.sin(solarAzimuth)*Math.cos(solarElevation),Math.sin(solarElevation),-Math.cos(solarAzimuth)*Math.cos(solarElevation));
   const textures = new Map();
+  const substituteMaps = new Map();
+  function substitute(colour) {
+    if (!substituteMaps.has(colour)) {
+      const pixel=document.createElement('canvas');
+      pixel.width=pixel.height=1;
+      const ctx=pixel.getContext('2d');
+      ctx.fillStyle=colour;ctx.fillRect(0,0,1,1);
+      substituteMaps.set(colour,pixel);
+    }
+    return substituteMaps.get(colour);
+  }
+  function loadSurface(name,colour) {
+    const tex=loader.load(asset(name),undefined,undefined,()=>{
+      tex.image=substitute(colour);tex.needsUpdate=true;
+    });
+    return tex;
+  }
   function texture(name, srgb=false) {
     if (textures.has(name)) return textures.get(name);
-    const tex = loader.load(asset(name));
+    const colour = name.includes('-normal') ? '#8080ff' : srgb ? '#d6d9d6' : '#252525';
+    const tex = loadSurface(name,colour);
     tex.wrapS=tex.wrapT=T.RepeatWrapping;
     tex.anisotropy=8;
     if (srgb) tex.colorSpace=T.SRGBColorSpace;
@@ -162,8 +177,14 @@ export function buildWorld(T, scene, {supportsHDR=true, onAssetLoaded}={}) {
   // Baking the mask lets the ground share the photographed sky reflection without
   // rendering a mirrored copy of the scene during camera movement.
   const apron=texture('apron-mask.jpg');
-  const yardProbe=new T.WebGLCubeRenderTarget(256,{type:supportsHDR?T.HalfFloatType:T.UnsignedByteType,generateMipmaps:true,minFilter:T.LinearMipmapLinearFilter});
+  // The harbour is static at this fixed probe. The six 256px faces store the
+  // original linear radiance divided by 16 in sRGB, which also works on LDR GPUs.
+  // Reflections arrive independently of the textures needed for the first frame.
   const probeOrigin=vec(0,1.55,10),probeReady={value:0};
+  const faceUrls=['px','nx','py','ny','pz','nz'].map(face=>asset('yard-reflection-'+face+'.webp'));
+  const yardProbe=new T.CubeTextureLoader().load(faceUrls,()=>{probeReady.value=1;});
+  yardProbe.colorSpace=T.SRGBColorSpace;
+  yardProbe.minFilter=T.LinearMipmapLinearFilter;yardProbe.generateMipmaps=true;
   const roadWhite=surface('#b3b2a1',.83);
   const yardMaterials=[mat.floor,mat.asphalt,mat.stripe,roadWhite];
   for (const ground of yardMaterials) {
@@ -172,7 +193,7 @@ export function buildWorld(T, scene, {supportsHDR=true, onAssetLoaded}={}) {
     ground.onBeforeCompile=shader=>{
       setup(shader);
       shader.uniforms.apron={value:apron};
-      shader.uniforms.yardProbe={value:yardProbe?.texture ?? null};
+      shader.uniforms.yardProbe={value:yardProbe};
       shader.uniforms.probeReady=probeReady;
       shader.uniforms.probeOrigin={value:probeOrigin};
       shader.vertexShader='varying vec2 apronUv; varying vec3 yardPoint;\n'+shader.vertexShader.replace('#include <project_vertex>',
@@ -199,7 +220,7 @@ export function buildWorld(T, scene, {supportsHDR=true, onAssetLoaded}={}) {
             vec3 dist=(limit-yardPoint)/(sign(R)*max(abs(R),vec3(.0001))+vec3(.00001));
             float t=max(.1,min(dist.x,min(dist.y,dist.z)));
             vec3 sampleRay=mix(normalize(yardPoint+R*t-probeOrigin),R,smoothstep(.25,.72,R.y));
-            vec3 mirrored=textureLod(yardProbe,sampleRay,1.05+(1.-water)*1.9).rgb;
+            vec3 mirrored=textureLod(yardProbe,sampleRay,1.05+(1.-water)*1.9).rgb*16.;
             float fresnel=.035+.87*pow(1.-clamp(dot(V,N),0.,1.),3.);
             outgoingLight=mix(outgoingLight,mirrored,water*fresnel*.92);
           }
@@ -999,11 +1020,11 @@ export function buildWorld(T, scene, {supportsHDR=true, onAssetLoaded}={}) {
 
   scene.background=new T.Color('#acb1b3');
   scene.fog=new T.FogExp2('#8c9aa4',.0060);
-  const sky=loader.load(asset('stormbreak.webp'));
+  const sky=loadSurface('stormbreak.webp','#a8b9c5');
   sky.mapping=T.EquirectangularReflectionMapping;sky.colorSpace=T.SRGBColorSpace;
   // Baked from the full panorama at the original PMREM resolution. This keeps the
   // smallest reflections without allocating the temporary half-float convolution targets.
-  const ibl=loader.load(asset('harbour-ibl.webp'));
+  const ibl=loader.load(asset('harbour-ibl.webp'),undefined,undefined,()=>{scene.environment=null;});
   ibl.mapping=T.CubeUVReflectionMapping;ibl.colorSpace=T.SRGBColorSpace;
   ibl.generateMipmaps=false;ibl.minFilter=ibl.magFilter=T.LinearFilter;
   scene.environment=ibl;textures.set('harbour-ibl',ibl);
@@ -1150,28 +1171,13 @@ export function buildWorld(T, scene, {supportsHDR=true, onAssetLoaded}={}) {
   const airLight=buildAirLighting();
   let elapsed=0;
   return {colliders,spawns,bounds,ready,
-    captureReflection(renderer){
-      if(!yardProbe||probeReady.value)return;
-      const camera=new T.CubeCamera(.16,300,yardProbe);
-      camera.position.copy(probeOrigin);
-      const otherObjects=scene.children.filter(item=>item!==root&&item.visible);
-      for(const obj of otherObjects)obj.visible=false;
-      // Skip the floor to avoid sampling a cube while it is a render attachment.
-      const floorMeshes=root.children.filter(item=>yardMaterials.includes(item.material));
-      for(const mesh of floorMeshes)mesh.visible=false;
-      try{camera.update(renderer,scene);probeReady.value=1;}finally{
-        for(const mesh of floorMeshes)mesh.visible=true;
-        for(const obj of otherObjects)obj.visible=true;
-        renderer.shadowMap.needsUpdate=true;
-      }
-    },
     update(dt,t){elapsed=Number.isFinite(t)?t:elapsed+dt;sea.material.uniforms.time.value=elapsed;spillTime.value=elapsed;},
     dispose(){
       scene.remove(root);
       const materials=new Set(),geometries=new Set(),maps=new Set([sky,pourGrain,...textures.values()]);
       root.traverse(obj=>{if(obj.geometry)geometries.add(obj.geometry);if(obj.material){materials.add(obj.material);if(obj.material.map)maps.add(obj.material.map);}if(obj.isInstancedMesh)obj.dispose();});
       for(const m of materials)m.dispose();for(const g of geometries)g.dispose();for(const tex of maps)tex.dispose();
-      sun.shadow.dispose();yardProbe?.dispose();airLight?.dispose();scene.background=null;scene.environment=null;
+      sun.shadow.dispose();yardProbe.dispose();airLight?.dispose();scene.background=null;scene.environment=null;
     }
   };
 }

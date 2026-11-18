@@ -1,11 +1,11 @@
 import { enterLandscape, leaveLandscape } from "./landscape.js";
 import { MAP_PLAN } from "./level.js";
-const gameModule = "./game.js?v=1.3.0";
+import "./game.js";
 const $ = selector => document.querySelector(selector);
 const popup = $("#popup"), hud = $("#hud"), body = document.body;
 const fmtTime = value => [Math.floor(value / 60), Math.floor(value % 60)].map(v => String(v).padStart(2,"0")).join(":");
 const icon = name => '<svg aria-hidden="true"><use href="#i-' + name + '"/></svg>';
-let state = {phase:"menu"}, panel = "", lastFocus, plan=MAP_PLAN, boot, feedTimer, markTimer, hurtTimer;
+let state = {phase:"menu"}, panel = "", lastFocus, plan=MAP_PLAN, feedTimer, markTimer, hurtTimer;
 // Keep old shared links and bookmarks on the same deployment page.
 const entryUrl=new URL(location.href);
 if(entryUrl.searchParams.has("mode") || entryUrl.searchParams.has("v")){
@@ -119,16 +119,11 @@ function phasePanel(phase){
     $("#launch-error").textContent=state.error || "游戏文件未能载入，请检查网络连接后重试。";
   }
 }
-function loadGame(){
-  if(!boot)boot=import(gameModule).catch(error=>{boot=null;throw error});
-  return boot;
-}
-async function deploy(){
+function deploy(){
   $("#deploy").disabled=true;
   enterLandscape();
-  try { if(!window.Game){body.dataset.phase="loading";phasePanel("loading");await loadGame()}
-    applyOptions();window.Game.start();
-  } catch(e){console.error(e);leaveLandscape();body.dataset.phase="error";state={phase:"error",error:"基础程序载入失败。"+(e.message||"请检查网络连接后重试。")};phasePanel("error");boot=null}
+  try { applyOptions();window.Game.start(); }
+  catch(e){console.error(e);leaveLandscape();body.dataset.phase="error";state={phase:"error",error:e.message||"请重新载入网页。"};phasePanel("error")}
   finally{$("#deploy").disabled=false}
 }
 function paintCompass(heading){
@@ -146,8 +141,11 @@ function paintCompass(heading){
   c.globalAlpha=1;c.fillStyle="#1b2424a8";c.fillRect(mid-25,35,50,23);
   c.font="bold 18px Consolas,monospace";c.fillStyle="#ffcc74";c.fillText(String(Math.round(heading)%360).padStart(3,"0"),mid,53);
 }
+let preparingSince=null;
 function displayGame(s){
   const changed=state.phase!==s.phase;state=s;body.dataset.phase=s.phase;
+  if(s.rendererMode==="preparing")preparingSince??=performance.now();else preparingSince=null;
+  $("#scene-preparing").hidden=s.phase!=="playing" || preparingSince===null || performance.now()-preparingSince>10000;
   hud.hidden=!["playing","paused","won","lost"].includes(s.phase);
   if(changed){
     if(s.phase==="menu")leaveLandscape();
@@ -279,5 +277,5 @@ function resetTouchControls(){
 window.addEventListener("game-orientationchange",resetTouchControls);
 applyOptions();
 paintMap($("#map-preview"),"preview");
-const preloadGame=()=>loadGame().catch(()=>{});
-if("requestIdleCallback" in window)requestIdleCallback(preloadGame,{timeout:900});else setTimeout(preloadGame,150);
+$("#deploy span").textContent="开始行动";
+$("#deploy").disabled=false;

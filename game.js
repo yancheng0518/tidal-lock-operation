@@ -32,8 +32,8 @@ let touchLean = 0, leanPose = 0, lean = 0;
 let crouchHeld = false, crouchBlend = 0;
 let sensitivity = 1, raf = 0, previous = 0, nextState = 0, hadLock = false;
 let aimSensitivity = .65, fieldOfView = 72;
-let errorMessage = '', roundSerial = 0, runtime = 0;
-let warmed = false;
+let errorMessage = '', runtime = 0;
+let graphicsStarted = false;
 let compat, graphicsContext, graphicsEpoch=0, interruptWarmup=null, shaderFailure='';
 const tracers = [], sparks = [];
 let tracerIndex = 0, sparkIndex = 0, sparkObject;
@@ -68,19 +68,18 @@ function resize() {
   // The layout box is in game coordinates, even when its parent is rotated.
   const w = canvas.clientWidth, h = canvas.clientHeight;
   if (!w || !h) return;
-  if (compat) {
-    compat.resize(w,h);
-  } else {
+  if (compat) compat.resize(w,h);
+  if (renderer) {
     const ratio = Math.min(window.devicePixelRatio || 1, maxBufferSide / Math.max(w,h));
     renderer.getSize(viewportSize);
-    if (viewportSize.x === w && viewportSize.y === h && renderer.getPixelRatio() === ratio && camera.aspect === w / h) return;
-    renderer.setDrawingBufferSize(w,h,ratio);
+    if (viewportSize.x !== w || viewportSize.y !== h || renderer.getPixelRatio() !== ratio)
+      renderer.setDrawingBufferSize(w,h,ratio);
   }
   for (const cam of [camera, gunCamera]) {
     cam.aspect = w / h;
     cam.updateProjectionMatrix();
   }
-  if (warmed && ['paused','won','lost'].includes(phase)) render();
+  if (['paused','won','lost'].includes(phase) && (compat || canvas.dataset.renderer==='webgl')) render();
 }
 
 function initSimulation() {
@@ -106,7 +105,7 @@ async function warmWebGL(epoch,onProgress) {
     || canvas.getContext('webgl2',{alpha:false});
   if (!context || context.isContextLost()) throw new Error('浏览器未能创建 WebGL 2 上下文。');
   graphicsContext=context;
-  const [T,{buildWorld},{createWeapon,createEnemy},{createCinema}]=await Promise.all([
+  const [T,{buildWorld},{createWeapon,createEnemy},{createCinema,compileScenes}]=await Promise.all([
     import('./vendor/three.module.js'), import('./world.js?v=1.3.0'), import('./actors.js?v=1.3.0'),
     import('./cinema.js?v=1.3.0')
   ]);
@@ -129,30 +128,33 @@ async function warmWebGL(epoch,onProgress) {
     const art=createEnemy(T,scene,e.index);
     art.group.position.copy(e.group.position);art.group.quaternion.copy(e.group.quaternion);
     Object.assign(e,art);
-    e.update(0,{moving:0,time:0,hit:0,dead:false});
+    e.update(0,{moving:e.moving,time:elapsed,hit:e.hit,dead:e.hp<=0});
   }
   resize();updateCamera();
   await Promise.all([world.ready,weapon.ready,...enemies.map(e=>e.ready)]);
   if(epoch!==graphicsEpoch)return;
   onProgress();
-  world.captureReflection?.(renderer);
   gunScene.environment=scene.environment;gunScene.environmentIntensity=.30;
-  if(renderer.compileAsync) {
-    await renderer.compileAsync(scene,camera);
-    if(epoch!==graphicsEpoch)return;
-    onProgress();
-    await renderer.compileAsync(gunScene,gunCamera);
-    if(epoch!==graphicsEpoch)return;
-  }
-  resetWeapon();render();
+  await compileScenes(renderer,cinema,scene,camera,gunScene,gunCamera,()=>epoch===graphicsEpoch);
+  if(epoch!==graphicsEpoch)return;
+  if(context.isContextLost())throw new Error('浏览器在准备三维画面时释放了图形设备。');
+  // Draw behind the playable canvas. Switch only after the driver has accepted a frame.
+  updateWeapon(1);
+  renderWebGL();
   const glError=context.getError();
   if(context.isContextLost() || glError===context.OUT_OF_MEMORY || glError===context.INVALID_FRAMEBUFFER_OPERATION)
     throw new Error('图形设备无法完成首帧绘制。');
   canvas.dataset.renderer='webgl';
+  compatFrame.hidden=true;
+  compat?.dispose();
+  compat=null;
+  compatFrame.width=compatFrame.height=1;
+  announce();
 }
 
 function useCompat(reason) {
-  if(compat || !motor)return;
+  if(!motor)return;
+  canvas.dataset.renderer='compat';
   graphicsEpoch++;
   interruptWarmup?.(new Error('已切换至兼容画面。'));
   if(reason) console.warn('使用轻量兼容画面',reason);
@@ -171,9 +173,8 @@ function useCompat(reason) {
   renderer=cinema=weapon=null;
   world=PORT;scene.clear();scene.environment=scene.background=null;gunScene.clear();gunScene.environment=null;
   canvas.width=canvas.height=1;
-  compat=createCompatRenderer(compatFrame,PORT);
-  canvas.dataset.renderer='compat';compatFrame.hidden=false;
-  warmed=true;
+  if(!compat)compat=createCompatRenderer(compatFrame,PORT);
+  compatFrame.hidden=false;
   resize();
   if(phase!=='loading' && phase!=='menu'){render();announce();}
 }
@@ -483,15 +484,19 @@ function step(dt) {
   for(const e of enemies) enemyTick(e,dt);
   if(health>0 && elapsed-lastHurt>8.5 && health<100) health=Math.min(100,health+dt*3.5);
   const airborne=!motor.grounded,jumping=motor.vy>0;
-  weapon?.update(dt,{
-    ads,reload:reloadLeft>0?1-reloadLeft/reloadDuration:0,fire:flash,shots,walk,time:elapsed,
-    sprint,strafe,crouch:crouchBlend,stepPhase:foot,viewRotation:camera.quaternion,
-    lean,airborne,verticalVelocity:motor.vy,landing:motor.landing,sunVisibility:updateSunVisibility(dt)
-  });
+  updateWeapon(dt);
   world.update?.(dt,runtime);
   updateEffects(dt);
   emit('game-view',{heading:heading(),ads,walk,sprint,flash,lean,jumping,airborne,
     x:camera.position.x,y:camera.position.y,z:camera.position.z});
+}
+
+function updateWeapon(dt) {
+  weapon?.update(dt,{
+    ads,reload:reloadLeft>0?1-reloadLeft/reloadDuration:0,fire:flash,shots,walk,time:elapsed,
+    sprint,strafe,crouch:crouchBlend,stepPhase:foot,viewRotation:camera.quaternion,
+    lean,airborne:!motor.grounded,verticalVelocity:motor.vy,landing:motor.landing,sunVisibility:updateSunVisibility(dt)
+  });
 }
 
 const lightRay = new THREE.Ray();
@@ -523,7 +528,10 @@ function render() {
       airborne:!motor.grounded,landing:motor.landing,shots,tracers,sparks});
     return;
   }
-  if (!renderer) return;
+  if(canvas.dataset.renderer==='webgl')renderWebGL();
+}
+
+function renderWebGL() {
   if (cinema) {
     cinema.render(scene,camera,gunScene,gunCamera);
   } else {
@@ -631,12 +639,7 @@ function lastLaunchInterrupted() {
   } catch {return false;}
 }
 
-async function prepareGraphics(serial) {
-  if(warmed)return;
-  if(compact && lastLaunchInterrupted()) {
-    clearPendingLaunch();
-    useCompat();return;
-  }
+async function prepareGraphics() {
   const epoch=++graphicsEpoch;
   let timer;
   const interrupted=new Promise((_,reject)=>{
@@ -651,9 +654,17 @@ async function prepareGraphics(serial) {
     if(compact){try{sessionStorage.setItem(pendingKey,String(Date.now()));}catch{}}
     onProgress();
     await Promise.race([warmWebGL(epoch,onProgress),interrupted]);
-    if(epoch===graphicsEpoch)warmed=true;
+    if(epoch===graphicsEpoch && phase==='loading')resume(false);
   }catch(err){
-    if(serial===roundSerial && !compat)useCompat(err);
+    if(epoch===graphicsEpoch){
+      try {
+        useCompat(err);
+        if(phase==='loading'){render();resume(false);}
+      } catch(failure) {
+        errorMessage=failure.message || String(failure);
+        finish('error');
+      }
+    }
   }finally{
     clearTimeout(timer);interruptWarmup=null;
     clearPendingLaunch();
@@ -661,46 +672,58 @@ async function prepareGraphics(serial) {
 }
 
 function start() {
-  if(phase==='loading') return;
-  const serial=++roundSerial;
+  if(phase==='loading')return;
   clearInput();
   lockRetryUsed=false;
-  phase='loading'; errorMessage='';
+  phase='loading';errorMessage='';
   announce();
-  audio.unlock(); lock();
-  requestAnimationFrame(() => requestAnimationFrame(async () => {
-    if(serial!==roundSerial) return;
-    try {
-      initSimulation();
-      motor.reset();
-      player.set(0,eye,22);
-      leanPose=lean=0;
-      yaw=pitch=recoil=flash=ads=sprint=reloadLeft=fireDelay=walk=foot=crouchBlend=0;
-      health=100; ammo=magazine; reserve=150; lastHurt=0;
-      kills=elapsed=shots=hits=0;
-      for(const e of enemies) {
-        e.hp=100; e.hit=e.firing=0; e.alerted=false; e.cooldown=3.5+e.index*.48;
-        e.group.position.set(e.spawn.x,0,e.spawn.z); e.group.rotation.set(0,0,0);
-        e.group.visible=true;
-        e.moving=0;
-        e.update?.(0,{moving:0,time:0,hit:0,dead:false});
+  try {
+    audio.unlock();lock();
+    initSimulation();
+    motor.reset();
+    player.set(0,eye,22);
+    leanPose=lean=0;
+    yaw=pitch=recoil=flash=ads=sprint=reloadLeft=fireDelay=walk=foot=crouchBlend=0;
+    health=100; ammo=magazine; reserve=150; lastHurt=0;
+    kills=elapsed=shots=hits=0;
+    for(const e of enemies) {
+      e.hp=100; e.hit=e.firing=0; e.alerted=false; e.cooldown=3.5+e.index*.48;
+      e.group.position.set(e.spawn.x,0,e.spawn.z); e.group.rotation.set(0,0,0);
+      e.group.visible=true;
+      e.moving=0;
+      e.update?.(0,{moving:0,time:0,hit:0,dead:false});
+    }
+    for(const t of tracers) { t.life=0; t.line.visible=false; }
+    const buf=sparkObject.geometry.attributes.position;
+    sparks.forEach((p,i)=>{p.life=0; buf.setXYZ(i,0,-999,0);}); buf.needsUpdate=true;
+    updateCamera();
+    if(!graphicsStarted) {
+      graphicsStarted=true;
+      const skipGPU=compact && lastLaunchInterrupted();
+      clearPendingLaunch();
+      canvas.dataset.renderer=skipGPU?'compat':'preparing';
+      try {
+        compat=createCompatRenderer(compatFrame,PORT);
+        compatFrame.hidden=false;
+      } catch(error) {
+        if(skipGPU)throw error;
+        // Some embedded browsers only provide a WebGL canvas.
+        console.warn('启动画布不可用，正在准备三维场景。',error);
       }
-      for(const t of tracers) { t.life=0; t.line.visible=false; }
-      const buf=sparkObject.geometry.attributes.position;
-      sparks.forEach((p,i)=>{p.life=0; buf.setXYZ(i,0,-999,0);}); buf.needsUpdate=true;
-      updateCamera();
-      await prepareGraphics(serial);
-      if(serial!==roundSerial) return;
-      if(renderer)renderer.shadowMap.needsUpdate=true;
-      resize();resetWeapon();
+      // Leave a paint opportunity before a driver compiles shaders on the main thread.
+      if(!skipGPU) {
+        requestAnimationFrame(()=>setTimeout(prepareGraphics,0));
+      }
+    }
+    if(renderer)renderer.shadowMap.needsUpdate=true;
+    resize();resetWeapon();
+    if(compat || canvas.dataset.renderer==='webgl') {
       render();
       resume(false);
-    } catch(err) {
-      if(serial!==roundSerial)return;
-      if(motor && !compat && recoverGraphics(err)){resume(false);return;}
-      errorMessage=err.message || String(err);console.error(err);finish('error');
     }
-  }));
+  } catch(err) {
+    errorMessage=err.message || String(err);console.error(err);finish('error');
+  }
 }
 
 function pause() { if(phase==='playing') finish('paused'); }
@@ -715,7 +738,7 @@ function resume(requestLock=true) {
   canvas.focus({preventScroll:true});
   raf=requestAnimationFrame(frame);
 }
-function menu() { roundSerial++;graphicsEpoch++;interruptWarmup?.(new Error('已返回部署。'));finish('menu'); }
+function menu() { finish('menu'); }
 
 function look(dx,dy) {
   if(phase!=='playing') return;
@@ -830,7 +853,7 @@ window.addEventListener('game-orientationchange',()=>{
 });
 canvas.addEventListener('webglcontextlost',e=>{
   e.preventDefault();
-  if(compat || !motor)return;
+  if(!motor || canvas.dataset.renderer==='compat')return;
   const reason=new Error('图形设备的上下文已被浏览器释放。');
   if(interruptWarmup)interruptWarmup(reason);
   else recoverGraphics(reason);
