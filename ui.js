@@ -1,4 +1,5 @@
-"use strict";
+import { enterLandscape, leaveLandscape } from "./landscape.js";
+const gameModule = "./game.js?v=1.2.1";
 const $ = selector => document.querySelector(selector);
 const popup = $("#popup"), hud = $("#hud"), body = document.body;
 const fmtTime = value => [Math.floor(value / 60), Math.floor(value % 60)].map(v => String(v).padStart(2,"0")).join(":");
@@ -80,7 +81,8 @@ function drawPanel(id){
     showPanel(id,"FIELD MANUAL","操作手册",'<dl>'+[
       ["移动 / 冲刺",key("W A S D")+"　/　"+key("Shift")],["下蹲","按住 "+key("C")+" 或 "+key("Ctrl")],["转动视角","鼠标移动 / 方向键"],["射击 / 瞄准","鼠标左键 / 按住右键"],["换弹 / 暂停",key("R")+"　/　"+key("Esc")+" "+key("P")],
       ["左探头 / 右探头","按住 "+key("Q")+"　/　"+key("E")+"，松开回正"],["跳跃",key("空格")],
-      ["触屏操作","左摇杆移动，右侧滑动转向。点按探头，再按回正。"]].map(v=>row(...v)).join("")+'</dl><p style="margin:14px 0 0">移动鼠标即可环视。浏览器未锁定鼠标时，移至画面边缘可持续转向。P 键可暂停并调整视野与灵敏度。</p>');
+      ["触屏移动 / 探头","左拇指按住摇杆移动，右拇指点「左探」或「右探」。点另一侧换边，再点同侧回正。"],
+      ["触屏转向 / 射击","在空白处或探头键上滑动可转向。按住射击键连射，拖动可跟随目标。"]].map(v=>row(...v)).join("")+'</dl><p style="margin:14px 0 0">移动鼠标即可环视。浏览器未锁定鼠标时，移至画面边缘可持续转向。P 键可暂停并调整视野与灵敏度。</p>');
   }else if(id==="settings"){
     const slider=(id,label,min,max,step,value,text)=>'<div class="row"><label for="'+id+'">'+label+'</label><input type="range" id="'+id+'" min="'+min+'" max="'+max+'" step="'+step+'" value="'+value+'"><output id="'+id+'-value">'+text+'</output></div>';
     showPanel(id,"TERMINAL SETTINGS","操控与画面",
@@ -109,9 +111,10 @@ function phasePanel(phase){
 }
 async function deploy(){
   $("#deploy").disabled=true;
-  try { if(!window.Game){body.dataset.phase="loading";phasePanel("loading");boot ||= import("./game.js");await boot}
+  enterLandscape();
+  try { if(!window.Game){body.dataset.phase="loading";phasePanel("loading");boot ||= import(gameModule);await boot}
     applyOptions();window.Game.start();
-  } catch(e){console.error(e);body.dataset.phase="error";state={phase:"error"};phasePanel("error");boot=null}
+  } catch(e){console.error(e);leaveLandscape();body.dataset.phase="error";state={phase:"error"};phasePanel("error");boot=null}
   finally{$("#deploy").disabled=false}
 }
 function paintCompass(heading){
@@ -132,10 +135,11 @@ function displayGame(s){
   const changed=state.phase!==s.phase;state=s;body.dataset.phase=s.phase;
   hud.hidden=!["playing","paused","won","lost"].includes(s.phase);
   if(changed){
+    if(s.phase==="menu")leaveLandscape();
     phasePanel(s.phase);
     if(s.phase!=="playing"){
       threatBearing=null;threat.classList.remove("visible");$("#feed").textContent="";
-      for(const id of ["#touchAim","#touchCrouch","#touchLeanLeft","#touchLeanRight"])$(id).setAttribute("aria-pressed","false");
+      resetTouchControls();
     }
   }
   if(hud.hidden)return;
@@ -167,8 +171,9 @@ function dismissPanel(){if(state.phase==="paused"&&panel==="settings")phasePanel
 $("#closePopup").onclick=dismissPanel;popup.addEventListener("click",e=>{
   if(e.target===popup&&!$("#closePopup").hidden){dismissPanel();return}
   const a=e.target.closest("[data-action]")?.dataset.action;if(!a)return;
+  if(a==="resume"||a==="restart")enterLandscape();
   if(a==="settings")drawPanel("settings");else if(a==="refresh")location.reload();
-  else if(window.Game)window.Game[a]();else {state={phase:"menu"};body.dataset.phase="menu";closePanel()}
+  else if(window.Game)window.Game[a]();else {leaveLandscape();state={phase:"menu"};body.dataset.phase="menu";closePanel()}
 });
 window.addEventListener("keydown",e=>{
   if(popup.hidden)return;
@@ -179,39 +184,85 @@ window.addEventListener("keydown",e=>{
     else if(!e.shiftKey&&document.activeElement===items.at(-1)){e.preventDefault();items[0].focus()}}
 });
 $("#sound").onclick=()=>{muted=!muted;applyOptions()};$("#pause").onclick=()=>window.Game?.pause();
-const stick=$("#stick");let stickId=null;
-function moveStick(e){const b=stick.getBoundingClientRect(),dx=e.clientX-b.x-b.width/2,dy=e.clientY-b.y-b.height/2,r=b.width*.35;
- const d=Math.max(r,Math.hypot(dx,dy));window.Game?.move(dx/d,-dy/d);stick.firstElementChild.style.transform='translate('+dx/d*r+'px,'+dy/d*r+'px)'}
-stick.onpointerdown=e=>{if(stickId!==null)return;stickId=e.pointerId;stick.setPointerCapture(stickId);moveStick(e)};
-stick.onpointermove=e=>{if(e.pointerId===stickId)moveStick(e)};
-stick.onlostpointercapture=()=>{stickId=null;window.Game?.move(0,0);stick.firstElementChild.style.transform=""};
-for(const [id,method] of [["#touchAim","aim"],["#touchCrouch","crouch"]]){
-  const button=$(id);button.setAttribute("aria-pressed","false");
-  button.onclick=()=>{
-    const active=button.getAttribute("aria-pressed")!=="true";
-    button.setAttribute("aria-pressed",String(active));window.Game?.[method](active);
+$("#pause").onpointerdown=e=>{
+  if(e.pointerType==="touch" && state.phase==="playing"){e.preventDefault();window.Game.pause()}
+};
+const stick=$("#stick"), peekLeft=$("#touchLeanLeft"), peekRight=$("#touchLeanRight");
+const touchPointers=new Map();
+
+// The second thumb may never generate a compatibility click. Activate at
+// pointerdown and keep ownership per control, even when a finger slides away.
+function bindTouchControl(control, press, drag, release) {
+  control.onpointerdown=e=>{
+    if(state.phase!=="playing" || e.button!==0 || touchPointers.has(control))return;
+    e.preventDefault();
+    touchPointers.set(control,{id:e.pointerId,x:e.clientX,y:e.clientY});
+    control.setPointerCapture(e.pointerId);
+    press(e);
+  };
+  control.onpointermove=e=>{
+    const point=touchPointers.get(control);
+    if(point?.id!==e.pointerId)return;
+    drag?.(e,point);
+    point.x=e.clientX;point.y=e.clientY;
+  };
+  const finish=(e,cancelled)=>{
+    if(touchPointers.get(control)?.id!==e.pointerId)return;
+    touchPointers.delete(control);
+    release?.(cancelled);
+  };
+  control.onpointerup=e=>finish(e,false);
+  control.onpointercancel=control.onlostpointercapture=e=>finish(e,true);
+  if(control.tagName==="BUTTON")control.onclick=e=>{
+    if(state.phase==="playing" && e.detail===0 && !e.pointerType){press(e);release?.(false)}
   };
 }
-const triggerButton=$("#touchFire");let firePointer=null;
-const peekButtons=[$("#touchLeanLeft"),$("#touchLeanRight")];
-peekButtons.forEach((button,index)=>{
-  button.onclick=()=>{
-    const active=button.getAttribute("aria-pressed")!=="true";
-    for(const item of peekButtons)item.setAttribute("aria-pressed",String(active&&item===button));
-    window.Game?.lean(active?(index===0?-1:1):0);
-  };
-});
-$("#touchJump").onpointerdown=e=>{e.preventDefault();window.Game?.jump()};
-triggerButton.onpointerdown=e=>{
-  if(firePointer)return;e.preventDefault();triggerButton.setPointerCapture(e.pointerId);firePointer={id:e.pointerId,x:e.clientX,y:e.clientY};window.Game?.fire(true);
-};
-triggerButton.onpointermove=e=>{
-  if(firePointer?.id!==e.pointerId)return;
-  window.Game?.look(e.clientX-firePointer.x,e.clientY-firePointer.y);firePointer.x=e.clientX;firePointer.y=e.clientY;
-};
-triggerButton.onlostpointercapture=()=>{firePointer=null;window.Game?.fire(false)};
-$("#touchReload").onclick=()=>window.Game?.reload();applyOptions();
+function moveStick(e){
+  const rect=stick.getBoundingClientRect(), radius=stick.clientWidth*.35;
+  const {x,y}=window.Game.screenDelta(e.clientX-rect.left-rect.width/2,e.clientY-rect.top-rect.height/2);
+  const scale=1/Math.max(radius,Math.hypot(x,y));
+  window.Game.move(x*scale,-y*scale);
+  stick.firstElementChild.style.transform='translate('+x*scale*radius+'px,'+y*scale*radius+'px)';
+}
+function stopStick(){
+  window.Game?.move(0,0);
+  stick.firstElementChild.style.transform="";
+}
+const dragToLook=(e,point)=>window.Game.lookScreen(e.clientX-point.x,e.clientY-point.y);
+bindTouchControl(stick,moveStick,moveStick,stopStick);
+for(const [id,method] of [["#touchAim","aim"],["#touchCrouch","crouch"]]){
+  const button=$(id);
+  function set(active){button.setAttribute("aria-pressed",String(active));window.Game?.[method](active)}
+  button.setAttribute("aria-pressed","false");
+  bindTouchControl(button,()=>set(button.getAttribute("aria-pressed")!=="true"),dragToLook,
+    cancelled=>{if(cancelled)set(false)});
+}
+function setPeek(side){
+  peekLeft.setAttribute("aria-pressed",String(side===-1));
+  peekRight.setAttribute("aria-pressed",String(side===1));
+  window.Game?.lean(side);
+}
+for(const [button,side] of [[peekLeft,-1],[peekRight,1]]){
+  bindTouchControl(button,()=>setPeek(button.getAttribute("aria-pressed")==="true"?0:side),dragToLook,
+    cancelled=>{if(cancelled && button.getAttribute("aria-pressed")==="true")setPeek(0)});
+}
+bindTouchControl($("#touchFire"),()=>window.Game.fire(true),dragToLook,()=>window.Game?.fire(false));
+bindTouchControl($("#touchJump"),()=>window.Game.jump());
+bindTouchControl($("#touchReload"),()=>window.Game.reload());
+
+function resetTouchControls(){
+  for(const [control,point] of touchPointers){
+    if(control.hasPointerCapture(point.id))control.releasePointerCapture(point.id);
+  }
+  touchPointers.clear();
+  stopStick();setPeek(0);
+  $("#touchAim").setAttribute("aria-pressed","false");window.Game?.aim(false);
+  $("#touchCrouch").setAttribute("aria-pressed","false");window.Game?.crouch(false);
+  window.Game?.fire(false);
+}
+window.addEventListener("game-orientationchange",resetTouchControls);
+applyOptions();
 paintMap($("#map-preview"),"preview");
 import("./world.js").then(m=>{plan=m.MAP_PLAN;paintMap($("#map-preview"),"preview");if(panel==="map")paintMap($(".large-map"),"large")}).catch(()=>{});
-const preloadGame=()=>{if(!boot)boot=import("./game.js").catch(()=>{boot=null})};
+const preloadGame=()=>{if(!boot)boot=import(gameModule).catch(()=>{boot=null})};
 if("requestIdleCallback" in window)requestIdleCallback(preloadGame,{timeout:900});else setTimeout(preloadGame,150);

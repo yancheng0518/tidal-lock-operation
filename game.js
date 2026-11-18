@@ -16,6 +16,7 @@ const v0 = new THREE.Vector3();
 const v1 = new THREE.Vector3();
 const v2 = new THREE.Vector3();
 const v3 = new THREE.Vector3();
+const viewportSize = new THREE.Vector2();
 const raycaster = new THREE.Raycaster();
 const player = new THREE.Vector3(0, eye, 22);
 let phase = 'menu', renderer, scene, camera, gunScene, gunCamera, weapon, world;
@@ -85,13 +86,16 @@ function fx(type) { emit('game-fx', {type}); }
 
 function resize() {
   if (!renderer) return;
-  const w = Math.max(1, canvas.clientWidth || window.innerWidth);
-  const h = Math.max(1, canvas.clientHeight || window.innerHeight);
+  // The layout box is in game coordinates, even when its parent is rotated.
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  renderer.getSize(viewportSize);
+  if (!w || !h || (viewportSize.x === w && viewportSize.y === h && camera.aspect === w / h)) return;
   renderer.setSize(w, h, false);
   for (const cam of [camera, gunCamera]) {
     cam.aspect = w / h;
     cam.updateProjectionMatrix();
   }
+  if (warmed && ['paused','won','lost'].includes(phase)) render();
 }
 
 function init() {
@@ -510,11 +514,19 @@ function resetMouse() {
   edgeX=edgeY=0;
 }
 
+function clearTouchInput() {
+  if(touchLook && canvas.hasPointerCapture(touchLook.id)) canvas.releasePointerCapture(touchLook.id);
+  touchLook=null;
+  if(trigger) shotBuffer=0;
+  trigger=aiming=crouchHeld=false;
+  touchX=touchZ=touchLean=0;
+}
+
 function clearInput() {
+  clearTouchInput();
   keys.clear();
   mouseButtons=0;
-  trigger=false; aiming=false; crouchHeld=false; touchX=touchZ=0; touchLook=null;
-  touchLean=strafe=shotBuffer=0;
+  strafe=shotBuffer=0;
   if(motor) motor.jumpBuffer=0;
   resetMouse();
 }
@@ -627,6 +639,16 @@ function look(dx,dy) {
   pitch=THREE.MathUtils.clamp(pitch-dy*factor,-1.36,1.36);
 }
 
+function screenDelta(dx,dy) {
+  if(document.body.classList.contains('rotated-landscape')) return {x:dy,y:-dx};
+  return {x:dx,y:dy};
+}
+
+function lookScreen(dx,dy) {
+  const delta=screenDelta(dx,dy);
+  look(delta.x,delta.y);
+}
+
 function fireNow() {
   if(reloadLeft>0) return;
   if(fireDelay>0) { shotBuffer=.085; return; }
@@ -665,10 +687,10 @@ canvas.addEventListener('mousedown',e=>{
 window.addEventListener('mousemove',e=>{
   if(phase!=='playing' || e.sourceCapabilities?.firesTouchEvents) return;
   mouseButtons&=e.buttons;
-  if(document.pointerLockElement===canvas) { look(e.movementX,e.movementY); return; }
+  if(document.pointerLockElement===canvas) { lookScreen(e.movementX,e.movementY); return; }
   if(e.target!==canvas) { resetMouse(); return; }
   if(mouseX!==null) {
-    look(e.clientX-mouseX,e.clientY-mouseY);
+    lookScreen(e.clientX-mouseX,e.clientY-mouseY);
     // A sandboxed iframe cannot recenter the system pointer. A narrow edge
     // band allows full rotations without dragging or picking up the mouse.
     edgeX=edgeTurn(e.offsetX,canvas.clientWidth);
@@ -682,10 +704,15 @@ window.addEventListener('mouseout',e=>{
 });
 canvas.addEventListener('pointermove',e=>{
   if(phase!=='playing' || touchLook?.id!==e.pointerId) return;
-  look(e.clientX-touchLook.x,e.clientY-touchLook.y);
+  lookScreen(e.clientX-touchLook.x,e.clientY-touchLook.y);
   touchLook.x=e.clientX; touchLook.y=e.clientY;
 });
-canvas.addEventListener('lostpointercapture',e=>{ if(touchLook?.id===e.pointerId) touchLook=null; });
+function endTouchLook(e) {
+  if(touchLook?.id===e.pointerId) touchLook=null;
+}
+canvas.addEventListener('pointerup',endTouchLook);
+canvas.addEventListener('pointercancel',endTouchLook);
+canvas.addEventListener('lostpointercapture',endTouchLook);
 canvas.addEventListener('pointerleave',e=>{ if(e.pointerType==='mouse') resetMouse(); });
 document.addEventListener('pointerlockchange',()=>{
   lockPending=false;
@@ -711,6 +738,11 @@ window.addEventListener('keyup',e=>{ keys.delete(e.code); });
 window.addEventListener('blur',pause);
 document.addEventListener('visibilitychange',()=>{if(document.hidden) pause();});
 window.addEventListener('resize',resize);
+if ('ResizeObserver' in window) new ResizeObserver(resize).observe(canvas);
+window.addEventListener('game-orientationchange',()=>{
+  clearTouchInput();
+  resize();
+});
 canvas.addEventListener('webglcontextlost',e=>{
   e.preventDefault();
   errorMessage='图形设备暂时失去连接，请重新载入页面。';
@@ -718,7 +750,7 @@ canvas.addEventListener('webglcontextlost',e=>{
 });
 
 window.Game={
-  start, pause, resume, restart:start, menu, reload:beginReload, fire, look, setGraphics,
+  start, pause, resume, restart:start, menu, reload:beginReload, fire, look, lookScreen, screenDelta, setGraphics,
   lean(sign){ touchLean=phase==='playing' ? Math.sign(Number(sign)||0) : 0; },
   jump(){ if(phase==='playing') motor.jump(); },
   aim(down){ aiming=phase==='playing' && !!down; },

@@ -31,25 +31,81 @@ footer{height:41px;flex:none;display:flex;align-items:center;padding:0 4.1vw;bor
 @media(max-width:680px){.topbar{height:59px;padding:0 17px}.brand{gap:5px}.brand svg{width:29px}.brand div{font-size:17px}.brand span{font-size:7px;letter-spacing:.8px}.topbar nav{gap:13px;margin-left:20px}.topbar nav button{font-size:11px;letter-spacing:0;padding:0}.utilities{gap:1px}.utilities .icon-button{width:27px}.icon-button svg{width:16px}.briefing{width:100%}.stage{padding:170px 23px 112px;min-height:620px;align-items:flex-end}.scene-art{background-position:62% top;background-size:auto 86%;background-color:#152022}.stage-shade{background:linear-gradient(0deg,#0d1517 0%,#101a1ee0 26%,#0b14199c 55%,#10191919 90%),linear-gradient(90deg,#15202580,transparent)}.image-id{font-size:8px;top:20px;right:20px}.briefing h1{font-size:clamp(70px,16vw,98px);margin-top:13px}.briefing h2{font-size:34px;margin:5px 0 12px}.eyebrow{font-size:10px;gap:8px}.summary{font-size:12px;max-width:315px}.metadata{margin:18px 0 20px;padding-top:14px;width:315px}.metadata strong{font-size:14px}.deploy{height:49px;min-width:205px;font-size:15px}.map-card{left:23px;right:23px;bottom:24px;width:calc(100% - 46px);display:flex;align-items:center;height:48px;overflow:hidden}.map-head{border:0;gap:15px;flex:1;order:1}.map-head svg{order:2}.map-graphic{height:48px;width:82px;order:0}.map-n{display:none}.map-caption{border:0;order:1;padding-right:12px}.map-caption>span{display:none}.map-caption small{font-size:8px}footer{padding:0 17px;height:34px;gap:14px}footer .foot-left{font-size:9px}.muted{font-size:8px}.build{display:none}.mission-hud{padding:5px 8px}.mission-hud strong{font-size:12px}#radar{width:80px;height:59px}.compass{top:2%;font-size:9px}.hud-right{top:9%}.dialog>header{padding:16px 19px}#dlg-body{padding:15px 19px}.brand + nav{white-space:nowrap}}
 @media(max-width:365px){.topbar nav{gap:7px;margin-left:10px}.topbar{padding:0 10px}.metadata{max-width:100%}}
 @media(pointer:coarse){
-  #touch{display:block;--button-size:46px;--fire-size:59px;--control-bottom:18%;--stick-size:88px}
-  #stick,.touch-actions,.touch-lean{position:absolute;bottom:var(--control-bottom);touch-action:none}
-  #stick{left:5%;width:var(--stick-size);height:var(--stick-size);pointer-events:auto;border:1px solid #cbd5cb88;border-radius:50%;background:#1b272c69;display:grid;place-items:center}
+  #touch{display:block;--button-size:48px;--fire-size:62px;--control-bottom:18%;--stick-size:96px}
+  #stick,.touch-actions{position:absolute;bottom:max(var(--control-bottom),calc(var(--play-safe-bottom,0px) + 46px));touch-action:none}
+  #stick{left:max(5%,calc(var(--play-safe-left,0px) + 12px));width:var(--stick-size);height:var(--stick-size);pointer-events:auto;border:1px solid #cbd5cb88;border-radius:50%;background:#1b272c69;display:grid;place-items:center}
   #stick i{width:32px;height:32px;border-radius:50%;background:#d5ded16e}
-  #touch button{border:1px solid #cdd8ca88;background:#1d2a2da5;color:#f1f4ed;font-weight:600;font-size:12px;border-radius:50%;width:var(--button-size);height:var(--button-size);pointer-events:auto;touch-action:none}
+  #touch button{border:1px solid #cdd8ca88;background:#1d2a2da5;color:#f1f4ed;font-weight:600;font-size:12px;border-radius:50%;width:var(--button-size);height:var(--button-size);pointer-events:auto;touch-action:none;-webkit-touch-callout:none}
   #touch button[aria-pressed="true"]{border-color:#c4edbc;background:#445f40da}
-  .touch-actions{right:4%;display:grid;grid-template-columns:repeat(2,var(--button-size)) var(--fire-size);align-items:center;gap:5px}
-  #touch #touchFire{grid-column:3;grid-row:1/3;width:var(--fire-size);height:var(--fire-size);background:#a96a2ca3}
-  .touch-lean{left:5%;bottom:calc(var(--control-bottom) + var(--stick-size) + 10px);display:flex;gap:5px}
+  .touch-actions{right:max(4%,calc(var(--play-safe-right,0px) + 12px));display:grid;grid-template-columns:repeat(2,var(--button-size)) var(--fire-size);grid-template-areas:". lean lean" "aim jump fire" "crouch reload fire";align-items:center;justify-items:center;gap:6px}
+  .touch-lean{grid-area:lean;justify-self:stretch;display:grid;grid-template-columns:var(--button-size) var(--fire-size);gap:6px;justify-items:center}
+  #touchAim{grid-area:aim}#touchCrouch{grid-area:crouch}#touchReload{grid-area:reload}#touchJump{grid-area:jump}
+  #touch #touchFire{grid-area:fire;width:var(--fire-size);height:var(--fire-size);background:#a96a2ca3}
+  @container play-surface (max-height:480px){
+    #touch{--control-bottom:17%;--button-size:44px;--fire-size:58px;--stick-size:84px}
+  }
 }
 @media(max-height:480px) and (orientation:landscape){.stage{min-height:365px;padding:38px 5vw 20px}.briefing h1{font-size:60px}.briefing h2{font-size:25px;margin:3px 0}.summary{font-size:11px;max-width:320px}.metadata{margin:9px 0;padding-top:7px}.metadata strong{font-size:12px}.deploy{height:36px;min-width:170px;font-size:13px}.map-card{width:145px;bottom:16px}.topbar{height:44px}footer{height:25px}.health,.ammo{bottom:2%}#radar{width:66px;height:49px}}
 @media(prefers-reduced-motion:reduce){*,*:before{animation-duration:.01ms!important;transition:none!important}}
 .compass{background:none;top:2.5%;filter:drop-shadow(0 1px 2px #000a);line-height:1}.compass canvas{display:block;width:min(320px,35vw);height:auto}.compass b{display:block;color:#ffc767;font-size:10px;line-height:.8}.reticle{z-index:1}#hud:before{content:"";position:absolute;inset:0;background:radial-gradient(ellipse at 50% 45%,transparent 46%,rgba(10,20,26,.18) 100%);pointer-events:none}@media(pointer:coarse) and (max-height:480px){
-  #touch{--control-bottom:19%;--button-size:44px;--fire-size:57px;--stick-size:78px}
-  .touch-lean{left:calc(5% + var(--stick-size) + 9px);bottom:var(--control-bottom)}
   .ammo,.health{padding:6px 12px}.ammo strong{font-size:42px}.health strong{font-size:34px}}
 body[data-phase="playing"] #game{cursor:none}
 .row select{background:#243335;color:#f1f5e9;padding:6px 9px;border:1px solid #70877c7a;font:inherit}.row output{min-width:46px;text-align:right;color:#c6dbd0;font:12px var(--mono)}
 @media(max-width:680px){.mission-hud{left:12px;top:12px;padding:0;width:125px}.radar-box{width:100px;height:78px}.radar-box #radar{width:100%;height:100%}.assignment{margin-top:4px;padding:4px;gap:3px}.assignment strong{font-size:10px}.assignment #objective{font-size:9px}.zone-name{font-size:9px}.health{width:140px}.health .vitals-line strong{font-size:21px}}
-@media(max-height:480px) and (orientation:landscape){.mission-hud{width:131px;top:3%;padding:0}.radar-box{width:94px;height:69px}.radar-box #radar{width:100%;height:100%}.assignment{margin-top:4px;padding:4px}.assignment strong{font-size:10px}.assignment #objective{font-size:9px}.zone-name{font-size:9px;padding-bottom:2px}.health{width:138px}.health .vitals-line strong{font-size:21px}.ammo .ammo-count strong{font-size:36px}}
+@container play-surface (max-height:480px){.mission-hud{width:131px;padding:0}.radar-box{width:94px;height:69px}.radar-box #radar{width:100%;height:100%}.assignment{margin-top:4px;padding:4px}.assignment strong{font-size:10px}.assignment #objective{font-size:9px}.zone-name{font-size:9px;padding-bottom:2px}.health{width:138px}.health .vitals-line strong{font-size:21px}.ammo .ammo-count strong{font-size:36px}}
 
 .credits-link{display:inline-block;margin-top:14px;color:#bccbc1;font-size:11px;text-underline-offset:3px}
+
+.mobile-mode{display:none}
+#play-surface{
+  display:contents;
+  --play-safe-left:env(safe-area-inset-left,0px);
+  --play-safe-right:env(safe-area-inset-right,0px);
+  --play-safe-top:env(safe-area-inset-top,0px);
+  --play-safe-bottom:env(safe-area-inset-bottom,0px);
+}
+body:not([data-phase="menu"]){overflow:hidden;overscroll-behavior:none}
+body:not([data-phase="menu"]) #play-surface{
+  display:block;position:fixed;left:0;top:0;
+  width:100%;height:100%;height:100dvh;overflow:hidden;
+  container:play-surface / size;
+}
+body:not([data-phase="menu"]) #play-surface :is(#game,#hud,#popup){position:absolute}
+body.rotated-landscape:not([data-phase="menu"]) #play-surface{
+  left:100%;width:100vh;width:100dvh;height:100vw;height:100dvw;
+  transform-origin:top left;transform:rotate(90deg);
+  --play-safe-left:env(safe-area-inset-top,0px);
+  --play-safe-right:env(safe-area-inset-bottom,0px);
+  --play-safe-top:env(safe-area-inset-right,0px);
+  --play-safe-bottom:env(safe-area-inset-left,0px);
+}
+@media(pointer:coarse){
+  .mobile-mode{display:inline-block;vertical-align:middle;margin-left:12px;color:#d5ded6;font-size:12px}
+  #play-surface .mission-hud{left:max(2.3%,calc(var(--play-safe-left) + 7px));top:max(3%,calc(var(--play-safe-top) + 4px))}
+  #play-surface .hud-right{right:max(2.5%,calc(var(--play-safe-right) + 7px));top:max(3%,calc(var(--play-safe-top) + 4px))}
+  #play-surface .compass{top:max(2%,var(--play-safe-top))}
+  #play-surface .compass canvas{width:min(320px,35cqw)}
+  #play-surface .health,#play-surface .ammo{bottom:max(2%,calc(var(--play-safe-bottom) + 4px));padding:5px 10px}
+  #play-surface .health{left:max(2.3%,calc(var(--play-safe-left) + 7px))}
+  #play-surface .ammo{right:max(2.5%,calc(var(--play-safe-right) + 7px))}
+  body:not([data-phase="menu"]) #popup{
+    padding:max(8px,var(--play-safe-top)) max(10px,var(--play-safe-right)) max(8px,var(--play-safe-bottom)) max(10px,var(--play-safe-left));
+  }
+  body:not([data-phase="menu"]) .dialog{max-height:100%;overscroll-behavior:contain}
+  body:not([data-phase="menu"]) #popup{grid-template-rows:minmax(0,1fr)}
+}
+@media(pointer:coarse) and (orientation:landscape) and (max-height:540px){
+  #lobby{min-height:100dvh}
+  .topbar{height:42px;padding-inline:max(16px,env(safe-area-inset-left)) max(16px,env(safe-area-inset-right))}
+  .stage{min-height:255px;align-items:center;padding:10px max(5vw,env(safe-area-inset-left)) 12px}
+  .scene-art{background-size:cover;background-position:center}
+  .stage-shade{background:linear-gradient(90deg,#101819df,#10181994 43%,transparent 77%)}
+  .briefing{width:min(53vw,420px)}
+  .map-card{left:auto;right:max(4%,env(safe-area-inset-right));bottom:12px;width:136px;height:auto;display:block}
+  .map-graphic{width:100%;height:52px}
+  .briefing .eyebrow{font-size:9px}.briefing h1{font-size:clamp(43px,13vh,66px);margin-top:7px}
+  .briefing h2{font-size:22px;margin:2px 0 4px}.summary{font-size:11px;line-height:1.45}
+  .metadata{width:min(320px,100%);margin:8px 0;padding-top:6px}.metadata strong{font-size:12px;margin-top:3px}
+  .deploy{height:38px;min-width:166px;font-size:14px}
+  footer{height:24px;padding-bottom:env(safe-area-inset-bottom)}
+}
