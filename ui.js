@@ -90,7 +90,7 @@ function drawPanel(id){
       ["移动 / 冲刺",key("W A S D")+"　/　"+key("Shift")],["下蹲","按住 "+key("C")+" 或 "+key("Ctrl")],["转动视角","鼠标移动 / 方向键"],["射击 / 瞄准","鼠标左键 / 按住右键"],["换弹 / 暂停",key("R")+"　/　"+key("Esc")+" "+key("P")],
       ["左探头 / 右探头","按住 "+key("Q")+"　/　"+key("E")+"，松开回正"],["跳跃",key("空格")],
       ["触屏移动 / 探头","拖动左侧轮盘移动，点轮盘旁的「左探」或「右探」切换姿势，再点同侧回正。探头时也能移动。"],
-      ["触屏转向 / 瞄准","在右侧空白处滑动转向，双击举镜，再双击收镜。"],
+      ["触屏转向 / 瞄准","点右侧「瞄准」举镜，再点收镜。拖动瞄准键或在右侧空白处滑动可转向。双击空白处也可切换瞄准。"],
       ["触屏战斗","按住右侧「开火」连续射击，拖动可转向。点「跳跃」起跳，点「下蹲」切换蹲姿，点「换弹」更换弹匣。"]].map(v=>row(...v)).join("")+'</dl><p style="margin:14px 0 0">移动鼠标即可环视。浏览器未锁定鼠标时，移至画面边缘可持续转向。P 键可暂停并调整视野与灵敏度。</p>');
   }else if(id==="settings"){
     const slider=(id,label,min,max,step,value,text)=>'<div class="row"><label for="'+id+'">'+label+'</label><input type="range" id="'+id+'" min="'+min+'" max="'+max+'" step="'+step+'" value="'+value+'"><output id="'+id+'-value">'+text+'</output></div>';
@@ -276,6 +276,11 @@ function stopStick(){
 }
 const dragToLook=(e,point)=>window.Game.lookScreen(e.clientX-point.x,e.clientY-point.y);
 bindTouchControl(stick,moveStick,moveStick,stopStick);
+const aimButton=$("#touchAim");
+window.addEventListener("game-touch-aim",({detail})=>aimButton.setAttribute("aria-pressed",String(detail.active)));
+bindTouchControl(aimButton,()=>window.Game.toggleAim(),dragToLook,cancelled=>{
+  if(cancelled)window.Game.aim(false);
+});
 const crouchButton=$("#touchCrouch");
 function setCrouch(active){
   crouchButton.setAttribute("aria-pressed",String(active));

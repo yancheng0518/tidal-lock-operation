@@ -59,9 +59,9 @@ footer{height:41px;flex:none;display:flex;align-items:center;padding:0 4.1vw;bor
     bottom:calc(var(--control-bottom) + 16px);
     right:max(4.5%,calc(var(--play-safe-right) + 12px));
     grid-template-columns:var(--button-size) var(--button-size) var(--fire-size);
-    grid-template-areas:". jump fire" "reload crouch fire";
+    grid-template-areas:"aim jump fire" "reload crouch fire";
   }
-  #touchCrouch{grid-area:crouch}#touchReload{grid-area:reload}#touchJump{grid-area:jump}
+  #touchAim{grid-area:aim}#touchCrouch{grid-area:crouch}#touchReload{grid-area:reload}#touchJump{grid-area:jump}
   #touch #touchFire{grid-area:fire;gap:2px;width:var(--fire-size);height:var(--fire-size);border:2px solid #ffc984d4;background:#6b4526ce;color:#fff0d4}
   #touchFire svg{width:20px;height:20px}
   @container play-surface (max-height:310px){

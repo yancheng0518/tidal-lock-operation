@@ -617,12 +617,24 @@ function resetMouse() {
   edgeX=edgeY=0;
 }
 
+function setTouchAim(active) {
+  const next = phase === 'playing' && Boolean(active);
+  if (aiming === next) return;
+  aiming = next;
+  emit('game-touch-aim', {active: aiming});
+}
+
+function toggleTouchAim() {
+  setTouchAim(!aiming);
+}
+
 function clearTouchInput() {
   if(touchLook && canvas.hasPointerCapture(touchLook.id)) canvas.releasePointerCapture(touchLook.id);
   touchLook=null;
   lastAimTap=null;
   if(trigger) shotBuffer=0;
-  trigger=aiming=crouchHeld=false;
+  trigger=crouchHeld=false;
+  setTouchAim(false);
   touchX=touchZ=touchLean=0;
 }
 
@@ -955,7 +967,7 @@ function endTouchLook(e) {
     e.timeStamp-finger.startedAt<=250 && Math.hypot(e.clientX-finger.startX,e.clientY-finger.startY)<=10;
   if(!tapped) { lastAimTap=null; return; }
   if(lastAimTap && e.timeStamp-lastAimTap.time<=320 && Math.hypot(e.clientX-lastAimTap.x,e.clientY-lastAimTap.y)<=30) {
-    aiming=!aiming;
+    toggleTouchAim();
     lastAimTap=null;
   } else {
     lastAimTap={x:e.clientX,y:e.clientY,time:e.timeStamp};
@@ -1006,7 +1018,7 @@ window.Game={
   start, pause, resume, restart:start, menu, reload:beginReload, fire, look, lookScreen, screenDelta,
   lean(sign){ touchLean=phase==='playing' ? Math.sign(Number(sign)||0) : 0; },
   jump(){ if(phase==='playing') motor.jump(); },
-  aim(down){ aiming=phase==='playing' && !!down; },
+  aim:setTouchAim, toggleAim:toggleTouchAim,
   crouch(down){ crouchHeld=phase==='playing' && !!down; },
   move(x,z){ touchX=THREE.MathUtils.clamp(x||0,-1,1); touchZ=THREE.MathUtils.clamp(z||0,-1,1); },
   setMuted(value){audio.mute(value);},
