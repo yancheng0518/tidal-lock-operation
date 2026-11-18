@@ -56,8 +56,6 @@ body[data-phase="playing"] #game{cursor:none}
 
 .credits-link{display:inline-block;margin-top:14px;color:#bccbc1;font-size:11px;text-underline-offset:3px}
 
-.compat-launch{display:inline-flex;align-items:center;min-height:44px;padding:0 8px;margin-left:8px;font-size:13px;color:#e0e6e2;text-decoration:underline;text-underline-offset:4px}
-.compat-launch:hover{color:var(--orange)}
 #compat-frame{display:block;position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
 body[data-phase="menu"] #compat-frame{display:none}
 #play-surface{

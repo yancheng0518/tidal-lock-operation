@@ -1,10 +1,10 @@
 /* Tidal Lock. Dimensions are in metres, +Y is up, and north is -Z.
    Static pieces share instance batches. World-space texel density stays uniform
    across large civil engineering structures and small foreground props. */
+import { signRects } from './world-assets/yard-signs.js?v=1.3.0';
 import { MAP_PLAN } from './level.js';
 export { MAP_PLAN };
-export function buildWorld(T, scene, {compact=false, supportsHDR=true}={}) {
-  scene.userData.compact=compact;
+export function buildWorld(T, scene, {supportsHDR=true, onAssetLoaded}={}) {
   const root = new T.Group();
   root.name = 'Tidal Lock / civil works';
   scene.add(root);
@@ -18,21 +18,21 @@ export function buildWorld(T, scene, {compact=false, supportsHDR=true}={}) {
   const rounded = new T.SphereGeometry(.5,12,8), narrow = new T.CylinderGeometry(.5,.5,1,8);
   const dummy = new T.Object3D(), yAxis = vec(0,1,0);
   const manager = new T.LoadingManager();
+  if(onAssetLoaded) manager.onProgress=onAssetLoaded;
   const ready = new Promise((resolve,reject)=>{
     manager.onLoad=resolve;
     manager.onError=url=>reject(new Error('港区纹理加载失败 '+url.split('/').pop()));
   });
   const loader = new T.TextureLoader(manager);
   const asset = name => new URL('./world-assets/'+name,import.meta.url).href;
-  const surfaceAsset = name => asset(compact?'mobile/'+name.replace(/\.webp$/,'.jpg'):name);
   const solarElevation=T.MathUtils.degToRad(26), solarAzimuth=T.MathUtils.degToRad(35);
   const sunlight=vec(Math.sin(solarAzimuth)*Math.cos(solarElevation),Math.sin(solarElevation),-Math.cos(solarAzimuth)*Math.cos(solarElevation));
   const textures = new Map();
   function texture(name, srgb=false) {
     if (textures.has(name)) return textures.get(name);
-    const tex = loader.load(surfaceAsset(name));
+    const tex = loader.load(asset(name));
     tex.wrapS=tex.wrapT=T.RepeatWrapping;
-    tex.anisotropy=compact?2:4;
+    tex.anisotropy=8;
     if (srgb) tex.colorSpace=T.SRGBColorSpace;
     textures.set(name,tex);
     return tex;
@@ -124,21 +124,13 @@ export function buildWorld(T, scene, {compact=false, supportsHDR=true}={}) {
     for(let i=0;i<=n;i++){let t=i/n;box(m,a[0]+(b[0]-a[0])*t,y+h*.5,a[1]+(b[1]-a[1])*t,.065,h,.065);}
     for(const lift of [.47,1]) pipe(m,[a[0],y+h*lift,a[1]],[b[0],y+h*lift,b[1]],.062);
   }
-  // Paint directly into atlas pages. Keeping a temporary canvas for each label
-  // until upload can exhaust a phone's separate Canvas 2D backing-store budget.
-  const labelSize=compact?1024:2048, labelScale=compact?.5:1;
-  let labels, labelCtx, labelX, labelY, labelRow, labelPositions, labelUVs, labelNormals, labelIndices;
-
-  function newLabelPage() {
-    labels=document.createElement('canvas');labels.width=labels.height=labelSize;
-    labelCtx=labels.getContext('2d');
-    labelX=2;labelY=2;labelRow=0;
-    labelPositions=[];labelUVs=[];labelNormals=[];labelIndices=[];
-  }
-
-  function finishLabelPage() {
-    if(!labelIndices?.length)return;
-    const tex=new T.CanvasTexture(labels);tex.colorSpace=T.SRGBColorSpace;tex.anisotropy=compact?2:4;
+  // The weathered lettering is pre-rendered at the original world texel density.
+  // All placements share a cropped atlas and one draw call.
+  const labelPositions=[], labelUVs=[], labelNormals=[], labelIndices=[];
+  const nextSign=new Map();
+  function finishSigns() {
+    const tex=texture('yard-signs.webp',true);
+    tex.wrapS=tex.wrapT=T.ClampToEdgeWrapping;
     const material=new T.MeshStandardMaterial({map:tex,alphaTest:.24,depthWrite:false,
       roughness:.91,polygonOffset:true,polygonOffsetFactor:-2});
     const geo=new T.BufferGeometry();
@@ -148,42 +140,29 @@ export function buildWorld(T, scene, {compact=false, supportsHDR=true}={}) {
     const mesh=new T.Mesh(geo,material);mesh.receiveShadow=true;root.add(mesh);
   }
 
-  function decal(x,y,z,w,h,text,{angle=0,ink='#e7dfbd',bg=null,align='center',font=180,thin=false,ground=false,wear=1}={}) {
-    const width=768,height=Math.max(64,Math.min(640,Math.round(width*h/w)));
-    const pw=Math.ceil(labelScale*Math.min(460,Math.max(96,Math.ceil(w*76))));
-    const ph=Math.max(Math.ceil(12*labelScale),Math.ceil(pw*height/width));
-    if(!labels)newLabelPage();
-    if(labelX+pw+2>labelSize){labelX=2;labelY+=labelRow+4;labelRow=0;}
-    if(labelY+ph+2>labelSize){finishLabelPage();newLabelPage();}
-    const ctx=labelCtx;
-    ctx.save();ctx.translate(labelX,labelY);ctx.scale(pw/width,ph/height);
-    ctx.beginPath();ctx.rect(0,0,width,height);ctx.clip();
-    if(bg){ctx.fillStyle=bg;ctx.fillRect(0,0,width,height);}
-    ctx.fillStyle=ink;ctx.textAlign=align;ctx.textBaseline='middle';
-    ctx.font=(thin?'600 ':'900 ')+Math.min(font,height*.94)+'px "Arial Narrow","Microsoft YaHei",Arial,sans-serif';
-    ctx.fillText(text,align==='left'?8:width/2,height*.53,width*.975);
-    ctx.globalCompositeOperation='destination-out';
-    for(let i=0;i<1550*wear;i++){
-      ctx.fillStyle='rgba(0,0,0,'+(.1+rand()*.65)+')';
-      ctx.fillRect(rand()*width,rand()*height,1+rand()*5,1+rand()*3);
-    }
-    ctx.restore();
+  function decal(x,y,z,w,h,text,{angle=0,ground=false,wear=1}={}) {
+    const variants=signRects[text], index=nextSign.get(text)||0;
+    const [left,top,width,height]=variants[index % variants.length];
+    nextSign.set(text,index+1);
+    // The port generator shares a seed with the original sign weathering.
+    // Advance the stream by its baked samples to preserve later prop placements.
+    const samples=5*Math.ceil(1550*wear);
+    for(let i=0;i<samples;i++)rand();
 
     const q=new T.Quaternion().setFromEuler(ground?new T.Euler(-Math.PI/2,0,angle):new T.Euler(0,angle,0));
     const base=labelPositions.length/3,n=vec(0,0,1).applyQuaternion(q);
     for(const [u,v] of [[0,0],[1,0],[1,1],[0,1]]){
       const p=vec((u-.5)*w,(v-.5)*h,0).applyQuaternion(q);
       labelPositions.push(p.x+x,p.y+y,p.z+z);labelNormals.push(n.x,n.y,n.z);
-      labelUVs.push((labelX+u*pw)/labelSize,1-(labelY+(1-v)*ph)/labelSize);
+      labelUVs.push((left+u*width)/2048,1-(top+(1-v)*height)/512);
     }
     labelIndices.push(base,base+1,base+2,base,base+2,base+3);
-    labelX+=pw+4;labelRow=Math.max(labelRow,ph);
   }
   // A packed apron survey records wheel paths, accumulated grit and shallow wet spots.
   // Baking the mask lets the ground share the photographed sky reflection without
   // rendering a mirrored copy of the scene during camera movement.
   const apron=texture('apron-mask.jpg');
-  const yardProbe=compact?null:new T.WebGLCubeRenderTarget(256,{type:supportsHDR?T.HalfFloatType:T.UnsignedByteType,generateMipmaps:true,minFilter:T.LinearMipmapLinearFilter});
+  const yardProbe=new T.WebGLCubeRenderTarget(256,{type:supportsHDR?T.HalfFloatType:T.UnsignedByteType,generateMipmaps:true,minFilter:T.LinearMipmapLinearFilter});
   const probeOrigin=vec(0,1.55,10),probeReady={value:0};
   const roadWhite=surface('#b3b2a1',.83);
   const yardMaterials=[mat.floor,mat.asphalt,mat.stripe,roadWhite];
@@ -198,7 +177,6 @@ export function buildWorld(T, scene, {compact=false, supportsHDR=true}={}) {
       shader.uniforms.probeOrigin={value:probeOrigin};
       shader.vertexShader='varying vec2 apronUv; varying vec3 yardPoint;\n'+shader.vertexShader.replace('#include <project_vertex>',
         '#include <project_vertex>\nyardPoint=(instanceMatrix*vec4(position,1.)).xyz; apronUv=yardPoint.xz/vec2(50.,64.)+.5;');
-      if(compact)shader.fragmentShader='#define COMPACT_YARD\n'+shader.fragmentShader;
       shader.fragmentShader='uniform sampler2D apron; uniform samplerCube yardProbe; uniform float probeReady; uniform vec3 probeOrigin; varying vec2 apronUv; varying vec3 yardPoint;\n'+shader.fragmentShader
         .replace('#include <map_fragment>',`#include <map_fragment>
           vec3 traffic=texture2D(apron,apronUv).rgb;
@@ -211,7 +189,6 @@ export function buildWorld(T, scene, {compact=false, supportsHDR=true}={}) {
         .replace('#include <normal_fragment_maps>',`#include <normal_fragment_maps>
           normal=normalize(mix(normal,normalize(mat3(viewMatrix)*vec3(0.,1.,0.)),water*.985));`)
         .replace('#include <opaque_fragment>',`
-          #ifndef COMPACT_YARD
           if(water*probeReady>.01){
             vec3 V=normalize(cameraPosition-yardPoint);
             vec3 N=normalize(inverseTransformDirection(normal,viewMatrix));
@@ -226,10 +203,9 @@ export function buildWorld(T, scene, {compact=false, supportsHDR=true}={}) {
             float fresnel=.035+.87*pow(1.-clamp(dot(V,N),0.,1.),3.);
             outgoingLight=mix(outgoingLight,mirrored,water*fresnel*.92);
           }
-          #endif
           #include <opaque_fragment>`);
     };
-    ground.customProgramCacheKey=()=>'apron-water-film-'+(compact?'compact-':'')+(painted?ground.uuid:'pavement');
+    ground.customProgramCacheKey=()=>'apron-water-film-'+(painted?ground.uuid:'pavement');
   }
 
   // Ground construction: a patched central roadway, poured apron and expansion joints.
@@ -249,7 +225,7 @@ export function buildWorld(T, scene, {compact=false, supportsHDR=true}={}) {
   }
   // Transverse comb of faded stop lines at the south entry.
   for(let i=0;i<7;i++)box(mat.stripe,-3.65+i*1.52,.011,18,.6,.012,1.8);
-  decal(.7,.02,11.5,3,1,'03',{ground:true,ink:'#d6bc75'});
+  decal(.7,.02,11.5,3,1,'03',{ground:true});
   function ladder(x,z,base,h,width=.52){
     for(const a of [-1,1])cyl(mat.ladder,x+width*a*.5,base+h*.5,z,.065,h);
     for(let y=base+.2;y<base+h;y+=.35)pipe(mat.ladder,[x-width/2,y,z],[x+width/2,y,z],.052);
@@ -303,14 +279,14 @@ export function buildWorld(T, scene, {compact=false, supportsHDR=true}={}) {
   }
   for(let z=-15;z<8;z+=.53)box(mat.iron,-14,7.35,z,4.85,.05,.083,0,0,-.025);
   windowRow(-19,8.07,4.5,4.9,1.55,5);shutter(-19,.03,8.12,4.1,3.5);
-  decal(-18.95,6.55,8.14,5,.53,'TURBINE WORKS',{thin:true});
+  decal(-18.95,6.55,8.14,5,.53,'TURBINE WORKS');
   // Offset pump house on the eastern side. Offices overlook the quay.
   solid(mat.concrete,17,-11.2,8.3,6.6,14.1);
   box(mat.clean,16.9,7.48,-12,8.8,1.87,11.8);
   box(mat.edge,16.9,8.46,-12,9.16,.16,12.16);
   windowRow(16.85,-6.02,7.05,7.9,1.03,8);
   shutter(16.6,.04,-4.075,4.7,4.05);light(16.6,4.66,-3.91);
-  decal(17,5.73,-4.08,6.5,.73,'PUMP STATION',{ink:'#394d4e'});
+  decal(17,5.73,-4.08,6.5,.73,'PUMP STATION');
   ladder(20.05,-3.86,.18,6.77);
   hvac(14.5,8.61,-11.6);hvac(16.55,8.61,-11.6);
   for(let z=-17.9;z<-4.8;z+=2.0){
@@ -343,7 +319,7 @@ export function buildWorld(T, scene, {compact=false, supportsHDR=true}={}) {
     }
     box(mat.concrete,x,11.4,-31.15,16.08,2.7,4.0);
     box(mat.edge,x,12.83,-31.15,16.09,.15,4.24);
-    decal(x,11.48,-29.128,5.5,1.63,'GATE  '+n,{ink:'#455556'});
+    decal(x,11.48,-29.128,5.5,1.63,'GATE  '+n);
     railing([x-8,-29.05],[x+8,-29.05],12.9,.98);
     for(const off of [-5.4,5.4])light(x+off,10.34,-29.03);
   }
@@ -360,7 +336,7 @@ export function buildWorld(T, scene, {compact=false, supportsHDR=true}={}) {
   cyl(mat.iron,-8.7,22.35,-31.6,.12,3.1);cyl(mat.red,-8.7,24.03,-31.6,.2,.25);
   for(const x of [-10.3,-5.9])cable([-8.7,23.66,-31.6],[x,20.94,-33.7],.04,.018);
   box(mat.orange,8,7.05,-28.14,2.02,5.2,.08);
-  decal(8,7.3,-28.084,1.65,2.47,'3',{ink:'#e6d9b7'});
+  decal(8,7.3,-28.084,1.65,2.47,'3');
   // Central service gantry creates a strong horizontal middle distance.
   for(const x of [-10.1,10.4]){
     solid(mat.concrete,x,-18.6,1.18,1.18,1.4);
@@ -381,7 +357,7 @@ export function buildWorld(T, scene, {compact=false, supportsHDR=true}={}) {
   pipe(mat.rust,[-11.1,7.52,-18.47],[11.14,7.52,-18.47],.62);
   pipe(mat.iron,[-11.1,8.07,-18.98],[11.14,8.07,-18.98],.26);
   box(mat.blue,0,7.06,-17.71,6.8,1.22,.14);
-  decal(0,7.06,-17.626,6.48,1.0,'03   |   潮 闸',{ink:'#f7e6be'});
+  decal(0,7.06,-17.626,6.48,1.0,'03   |   潮 闸');
   // Container ribbing, corner castings, door bars, hinges and cargo codes.
   function container(x,z,w,d,h,m,code,base=0){
     box(m,x,base+h/2,z,w,h,d);
@@ -406,12 +382,12 @@ export function buildWorld(T, scene, {compact=false, supportsHDR=true}={}) {
         box(mat.black,x+xx*(w/2-.105),base+yy,front+s*.076,.105,.1,.015);
       }
     }
-    decal(x+w*.22,base+h*.71,z+d/2+.105,w*.37,.3,code,{ink:'#e3dfbf'});
+    decal(x+w*.22,base+h*.71,z+d/2+.105,w*.37,.3,code);
     for(const side of [-1,1]){
       const sx=x+side*(w/2+.068),angle=side*Math.PI/2;
-      decal(sx,base+h*.73,z-d*.17,d*.31,h*.132,'TIDAL  FREIGHT',{angle,ink:'#c0bdab',wear:3});
-      decal(sx,base+h*.64,z-d*.17,d*.275,h*.047,'INTERMODAL   LOGISTICS',{angle,ink:'#b0ac98',wear:2});
-      decal(sx,base+h*.81,z+d*.31,d*.139,h*.071,code.replace('TL ','TLU '),{angle,ink:'#d7cfb3'});
+      decal(sx,base+h*.73,z-d*.17,d*.31,h*.132,'TIDAL  FREIGHT',{angle,wear:3});
+      decal(sx,base+h*.64,z-d*.17,d*.275,h*.047,'INTERMODAL   LOGISTICS',{angle,wear:2});
+      decal(sx,base+h*.81,z+d*.31,d*.139,h*.071,code.replace('TL ','TLU '),{angle});
       for(const y of [.34,.41,.48])box(mat.worn,sx,base+y,z+d*.4,.016,.029,.31);
     }
   }
@@ -454,8 +430,8 @@ export function buildWorld(T, scene, {compact=false, supportsHDR=true}={}) {
         cyl(mat.bolt,x+xx*(w/2-.06),base+yy,z+sz*(d/2+.071),.037,.018,.037,Math.PI/2);
       }
     }
-    decal(x+w*.19,base+h*.57,z+d/2+.061,.43,.18,'TL  07',{ink:'#2b2d25',wear:1.8});
-    decal(x-w*.23,base+h*.66,z+d/2+.061,.22,.25,'↑↑',{ink:'#252920',wear:1.5});
+    decal(x+w*.19,base+h*.57,z+d/2+.061,.43,.18,'TL  07',{wear:1.8});
+    decal(x-w*.23,base+h*.66,z+d/2+.061,.22,.25,'↑↑',{wear:1.5});
     block(x,z,w+.1,d+.1,base+h,base);
     for(const xx of [-1,1]){
       for(const zz of [-1,1])box(mat.worn,x+xx*(w/2-.07),base+h/2,z+zz*d/2,.13,h,.09);
@@ -756,7 +732,7 @@ export function buildWorld(T, scene, {compact=false, supportsHDR=true}={}) {
   fc.lineTo(350,822);fc.lineTo(256,717);fc.lineTo(160,822);fc.fill();
   fc.fillStyle='#a79c83';fc.font='bold 25px Arial';fc.fillText('WATER  AUTHORITY',256,927);
   for(let i=0;i<8000;i++){fc.fillStyle=rand()>.5?'rgba(227,218,188,.13)':'rgba(0,0,0,.15)';fc.fillRect(rand()*512,rand()*1024,rand()*3+1,rand()*5+1);}
-  const flagMap=new T.CanvasTexture(flag);flagMap.colorSpace=T.SRGBColorSpace;flagMap.anisotropy=compact?2:4;
+  const flagMap=new T.CanvasTexture(flag);flagMap.colorSpace=T.SRGBColorSpace;flagMap.anisotropy=8;
   const flagMat=new T.MeshStandardMaterial({map:flagMap,roughness:.96,vertexColors:true,side:T.DoubleSide});
   const fabric={position:[],uv:[],color:[],index:[]};
   for(const [cx,w,drop] of [[-15.4,4.8,12.4],[29.7,4.9,12.6],[-49.9,5.4,12.5]]){
@@ -997,7 +973,7 @@ export function buildWorld(T, scene, {compact=false, supportsHDR=true}={}) {
     sideCyl(mat.bolt,-1.39,2.56,0,.17,1.01);
     b(mat.edge,1.33,1.12,0,.07,.42,.81);
     for(let j=0;j<7;j++)b(mat.bolt,1.379,.97+j*.047,0,.015,.014,.73);
-    decal(x+.78,1.08,z+.673,.69,.23,'F  /  06',{ink:'#263533'});
+    decal(x+.78,1.08,z+.673,.69,.23,'F  /  06');
     block(x,z,3.27,1.74,2.64);
   }
 
@@ -1013,7 +989,7 @@ export function buildWorld(T, scene, {compact=false, supportsHDR=true}={}) {
     if(w*d<.22||c.minY>.02)continue;
     inst(aoGeo,aoMat,(c.minX+c.maxX)*.5,.017,(c.minZ+c.maxZ)*.5,w*1.45+.45,d*1.42+.45,1,-Math.PI/2);
   }
-  finishLabelPage();
+  finishSigns();
   for(const {g,m,items} of batches.values()){
     const mesh=new T.InstancedMesh(g,m,items.length);
     items.forEach((matrix,i)=>mesh.setMatrixAt(i,matrix));
@@ -1023,23 +999,21 @@ export function buildWorld(T, scene, {compact=false, supportsHDR=true}={}) {
 
   scene.background=new T.Color('#acb1b3');
   scene.fog=new T.FogExp2('#8c9aa4',.0060);
-  const sky=loader.load(surfaceAsset('stormbreak.webp'));
+  const sky=loader.load(asset('stormbreak.webp'));
   sky.mapping=T.EquirectangularReflectionMapping;sky.colorSpace=T.SRGBColorSpace;
-  // The prefiltered atlas is sampled directly by Three's PBR shaders. It also
-  // works on WebGL2 implementations without renderable floating-point textures.
-  if(compact||!supportsHDR){
-    const ibl=loader.load(asset('mobile/harbour-ibl.png'));
-    ibl.mapping=T.CubeUVReflectionMapping;ibl.colorSpace=T.SRGBColorSpace;
-    ibl.generateMipmaps=false;ibl.minFilter=ibl.magFilter=T.LinearFilter;
-    scene.environment=ibl;textures.set('harbour-ibl',ibl);
-  } else scene.environment=sky;
+  // Baked from the full panorama at the original PMREM resolution. This keeps the
+  // smallest reflections without allocating the temporary half-float convolution targets.
+  const ibl=loader.load(asset('harbour-ibl.webp'));
+  ibl.mapping=T.CubeUVReflectionMapping;ibl.colorSpace=T.SRGBColorSpace;
+  ibl.generateMipmaps=false;ibl.minFilter=ibl.magFilter=T.LinearFilter;
+  scene.environment=ibl;textures.set('harbour-ibl',ibl);
   scene.environmentIntensity=.57;scene.backgroundIntensity=1.06;
   const ambient=new T.HemisphereLight(0xb8d5f8,0x95877d,.8);root.add(ambient);
   const sun=new T.DirectionalLight(0xffdbaf,4.65);
   sun.target.position.set(0,1,-2);
   sun.position.copy(sun.target.position).addScaledVector(sunlight,93);
   scene.userData.sunDirection=sunlight.clone();
-  sun.castShadow=true;sun.shadow.mapSize.setScalar(compact?1024:2048);
+  sun.castShadow=true;sun.shadow.mapSize.setScalar(2048);
   Object.assign(sun.shadow.camera,{left:-48,right:48,top:49,bottom:-36,near:1,far:161});
   sun.shadow.camera.updateProjectionMatrix();sun.shadow.bias=-.00032;sun.shadow.normalBias=.032;
   root.add(sun,sun.target);
@@ -1112,7 +1086,6 @@ export function buildWorld(T, scene, {compact=false, supportsHDR=true}={}) {
   // then integrate the light along a visible camera ray, ending on the surface.
   // This lets the shafts turn a corner or terminate at a wall without drawing
   // transparent cards through the player or sampling a full-resolution depth pass.
-  const volumeQuality={value:1};
   function buildAirLighting(){
     const nx=48,ny=16,nz=64;
     const airData=new Uint8Array(nx*ny*nz);
@@ -1147,15 +1120,14 @@ export function buildWorld(T, scene, {compact=false, supportsHDR=true}={}) {
       const setup=m.onBeforeCompile,previousKey=m.customProgramCacheKey();
       m.onBeforeCompile=shader=>{
         setup.call(m,shader);
-        shader.uniforms.airField={value:airLight};shader.uniforms.lightHeading={value:sunlight};shader.uniforms.volumeQuality=volumeQuality;
+        shader.uniforms.airField={value:airLight};shader.uniforms.lightHeading={value:sunlight};
         shader.vertexShader='varying vec3 surfaceAt;\n'+shader.vertexShader.replace('#include <project_vertex>',`#include <project_vertex>
         #ifdef USE_INSTANCING
             surfaceAt=(modelMatrix*instanceMatrix*vec4(transformed,1.)).xyz;
         #else
             surfaceAt=(modelMatrix*vec4(transformed,1.)).xyz;
         #endif`);
-        shader.fragmentShader='uniform highp sampler3D airField;uniform vec3 lightHeading;uniform int volumeQuality;varying vec3 surfaceAt;\n'+shader.fragmentShader.replace('#include <opaque_fragment>',`
-          if(volumeQuality>0){
+        shader.fragmentShader='uniform highp sampler3D airField;uniform vec3 lightHeading;varying vec3 surfaceAt;\n'+shader.fragmentShader.replace('#include <opaque_fragment>',`
           vec3 lineToSurface=surfaceAt-cameraPosition;
           float reach=min(length(lineToSurface),63.);
           vec3 lookRay=normalize(lineToSurface),slice=lookRay*(reach*.25);
@@ -1169,17 +1141,15 @@ export function buildWorld(T, scene, {compact=false, supportsHDR=true}={}) {
           float air=1.-exp(-fogMass*reach*.00185);
           vec3 inscatter=mix(vec3(.34,.40,.45),vec3(1.14,.87,.54),forwards);
           outgoingLight=mix(outgoingLight,inscatter,air);
-          }
         #include <opaque_fragment>`);
       };
       m.customProgramCacheKey=()=>previousKey+'-yard-shafts';
     }
     return airLight;
   }
-  const airLight=compact?null:buildAirLighting();
+  const airLight=buildAirLighting();
   let elapsed=0;
   return {colliders,spawns,bounds,ready,
-    setQuality(quality){volumeQuality.value=quality==='performance'?0:1;},
     captureReflection(renderer){
       if(!yardProbe||probeReady.value)return;
       const camera=new T.CubeCamera(.16,300,yardProbe);

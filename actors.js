@@ -1,5 +1,5 @@
 import { bootContacts, plantedLeg } from './actor-assets/footwork.js';
-import { equipment, mountWeapon } from './actor-assets/viewmodel.js?v=1.2.2';
+import { equipment, mountWeapon } from './actor-assets/viewmodel.js?v=1.3.0';
 // Tidal Lock original game models. All dimensions below are local scene units.
 const surfaceLibraries = new WeakMap();
 const patrolTemplates = new WeakMap();
@@ -365,7 +365,7 @@ export function createWeapon(T,scene,worldScene){
   const clamp=T.MathUtils.clamp;
   let stride=0,strafe=0,turnX=0,turnY=0,ring=0,ringVelocity=0,prevFire=0,flashTime=0,shotNo=0;
   let phase=0,camReady=false,airTilt=0,landDip=0,lastShot;
-  const ready=equipment(T,worldScene?.userData.compact).then(asset=>{
+  const ready=equipment(T).then(asset=>{
     rig=mountWeapon(T,group,{held:cloneSkin(asset.held),sight:asset.sight.clone(true)},muzzle,lens,opticAxis);
     sightDepth=rig.back-.008;
   }).catch(error=>{
@@ -581,13 +581,12 @@ function createFallbackGuard(T,scene,index=0) {
   return {group,update,hitMeshes};
 }
 
-const guardSources=new WeakMap(),compactGuardSources=new WeakMap(),guardEquipment=new WeakMap();
+const guardSources=new WeakMap(),guardEquipment=new WeakMap();
 
-function guardSource(T, compact=false){
-  const sources=compact?compactGuardSources:guardSources;
-  if(!sources.has(T)){
+function guardSource(T){
+  if(!guardSources.has(T)){
     const src=import('./actor-assets/loader.js').then(async({GLTFLoader})=>{
-      const gltf=await new GLTFLoader().loadAsync(new URL(compact?'./actor-assets/mobile/guard.glb':'./actor-assets/guard.glb',import.meta.url).href);
+      const gltf=await new GLTFLoader().loadAsync(new URL('./actor-assets/guard.glb',import.meta.url).href);
       const source=gltf.scene,clips=new Map(gltf.animations.map(a=>[a.name,a]));
       // Calibrate to the actual upright pose, including the sole and cap, independently
       // of the file's authoring units. This binds the visual body to gameplay's capsule.
@@ -607,9 +606,9 @@ function guardSource(T, compact=false){
       mixer.stopAllAction();mixer.uncacheRoot(source);
       return {source,clips,scale,fallLift,contacts,offset:new T.Vector3(-mount.x,-bounds.min.y,-mount.z).multiplyScalar(scale)};
     });
-    sources.set(T,src);
+    guardSources.set(T,src);
   }
-  return sources.get(T);
+  return guardSources.get(T);
 }
 
 function cloneSkin(source){
@@ -757,13 +756,17 @@ function rigGuard(T,group,asset,prop,index){
 export function createEnemy(T,scene,index=0){
   const group=new T.Group();scene.add(group);
   const hitMeshes=[];let animate=null,lastState={};
-  const compact=scene.userData.compact;
-  const ready=Promise.all([guardSource(T,compact),equipment(T,compact).catch(()=>null)]).then(([asset,gear])=>{
+  const ready=Promise.all([guardSource(T),equipment(T).catch(()=>null)]).then(([asset,gear])=>{
     animate=rigGuard(T,group,asset,gear?.carried,index);
     group.traverse(o=>{if(o.isSkinnedMesh)hitMeshes.push(o)});
   }).catch(error=>{
     console.warn('Using the built-in patrol model.',error);
     const fallback=createFallbackGuard(T,group,index);animate=fallback.update;hitMeshes.push(...fallback.hitMeshes);
-  }).then(()=>animate(0,lastState));
+  }).then(()=>{
+    group.traverse(part=>{
+      if(part.isMesh && !part.material.transparent) part.castShadow=true;
+    });
+    animate(0,lastState);
+  });
   return {group,hitMeshes,ready,update(dt,state={}){lastState=state;if(animate)animate(dt,state)}};
 }

@@ -1,13 +1,12 @@
 import * as THREE from './vendor/three.core.min.js';
 import { PORT } from './level.js';
-import { createCompatRenderer } from './compat-renderer.js?v=1.2.2';
+import { createCompatRenderer } from './compat-renderer.js?v=1.3.0';
 import { createAudio } from './audio.js';
 import { PlayerMotor } from './motor.js';
 
 const canvas = document.getElementById('game');
 const compatFrame = document.getElementById('compat-frame');
 const compact = matchMedia('(pointer: coarse)').matches;
-const directCompat = new URLSearchParams(location.search).get('mode') === 'compat';
 const audio = createAudio();
 const magazine = 30;
 const reloadDuration = 1.72;
@@ -35,34 +34,12 @@ let sensitivity = 1, raf = 0, previous = 0, nextState = 0, hadLock = false;
 let aimSensitivity = .65, fieldOfView = 72;
 let errorMessage = '', roundSerial = 0, runtime = 0;
 let warmed = false;
-let compat, graphicsContext, graphicsEpoch=0, interruptWarmup=null, preferCompat=false, shaderFailure='';
+let compat, graphicsContext, graphicsEpoch=0, interruptWarmup=null, shaderFailure='';
 const tracers = [], sparks = [];
 let tracerIndex = 0, sparkIndex = 0, sparkObject;
 let shadowAge = 0;
-let groundShadows;
 let cinema;
-let desiredDpr = 1, slowTime = 0, fastTime = 0;
-let graphics = compact ? 'performance' : 'balanced', averageFrame = 1 / 60;
-
-function qualityRatio() {
-  const mobile = matchMedia('(pointer: coarse)').matches;
-  const cap = graphics === 'high' ? 1.65 : mobile ? 1.05 : 1.3;
-  const native = Math.min(devicePixelRatio || 1, cap);
-  return graphics === 'performance' ? native * .76 : native;
-}
-
-function setGraphics(value) {
-  if (graphics === value || !['balanced','high','performance'].includes(value)) return;
-  graphics = value;
-  if (!renderer) return;
-  desiredDpr = qualityRatio();
-  renderer.setPixelRatio(desiredDpr);
-  groundShadows?.setQuality(graphics);
-  world?.setQuality?.(graphics);
-  slowTime = fastTime = 0;
-  averageFrame = 1 / 60;
-  if (phase === 'paused' && warmed) render();
-}
+let maxBufferSide=1;
 
 function emit(name, detail) {
   window.dispatchEvent(new CustomEvent(name, { detail }));
@@ -94,9 +71,10 @@ function resize() {
   if (compat) {
     compat.resize(w,h);
   } else {
+    const ratio = Math.min(window.devicePixelRatio || 1, maxBufferSide / Math.max(w,h));
     renderer.getSize(viewportSize);
-    if (viewportSize.x === w && viewportSize.y === h && camera.aspect === w / h) return;
-    renderer.setSize(w,h,false);
+    if (viewportSize.x === w && viewportSize.y === h && renderer.getPixelRatio() === ratio && camera.aspect === w / h) return;
+    renderer.setDrawingBufferSize(w,h,ratio);
   }
   for (const cam of [camera, gunCamera]) {
     cam.aspect = w / h;
@@ -122,30 +100,30 @@ function initSimulation() {
   initEffects();
 }
 
-async function warmWebGL(epoch) {
-  const options={alpha:false,antialias:!compact || graphics==='high',
-    powerPreference:compact?'default':'high-performance'};
-  const context=canvas.getContext('webgl2',options);
+async function warmWebGL(epoch,onProgress) {
+  const context = canvas.getContext('webgl2',{alpha:false,antialias:true,powerPreference:'high-performance'})
+    || canvas.getContext('webgl2',{alpha:false,antialias:true})
+    || canvas.getContext('webgl2',{alpha:false});
   if (!context || context.isContextLost()) throw new Error('浏览器未能创建 WebGL 2 上下文。');
   graphicsContext=context;
-  const [T,{buildWorld},{createWeapon,createEnemy},{createGroundShadows},{createCinema}]=await Promise.all([
-    import('./vendor/three.module.js'), import('./world.js?v=1.2.2'), import('./actors.js?v=1.2.2'),
-    import('./ground-shadows.js?v=1.2.2'), import('./cinema.js?v=1.2.2')
+  const [T,{buildWorld},{createWeapon,createEnemy},{createCinema}]=await Promise.all([
+    import('./vendor/three.module.js'), import('./world.js?v=1.3.0'), import('./actors.js?v=1.3.0'),
+    import('./cinema.js?v=1.3.0')
   ]);
   if(epoch!==graphicsEpoch) return;
-  renderer=new T.WebGLRenderer({canvas,context,...options});
+  onProgress();
+  renderer=new T.WebGLRenderer({canvas,context,alpha:false});
+  maxBufferSide=Math.min(renderer.capabilities.maxTextureSize,context.getParameter(context.MAX_RENDERBUFFER_SIZE));
   renderer.debug.onShaderError=(gl,program)=>{
     shaderFailure='图形驱动未能编译场景着色器。';
     console.warn(shaderFailure,gl.getProgramInfoLog(program));
   };
-  desiredDpr=qualityRatio();renderer.setPixelRatio(desiredDpr);
   renderer.shadowMap.enabled=true;renderer.shadowMap.type=T.PCFSoftShadowMap;
   renderer.shadowMap.autoUpdate=false;renderer.shadowMap.needsUpdate=true;
   renderer.toneMapping=T.ACESFilmicToneMapping;renderer.toneMappingExposure=1.02;
   renderer.outputColorSpace=T.SRGBColorSpace;renderer.autoClear=false;
-  if(!compact || graphics==='high') cinema=createCinema(renderer);
-  world=buildWorld(T,scene,{compact,supportsHDR:renderer.extensions.has('EXT_color_buffer_float')});
-  world.setQuality?.(graphics);
+  cinema=createCinema(renderer);
+  world=buildWorld(T,scene,{supportsHDR:renderer.extensions.has('EXT_color_buffer_float'),onAssetLoaded:onProgress});
   weapon=createWeapon(T,gunScene,scene);
   for(const e of enemies){
     const art=createEnemy(T,scene,e.index);
@@ -156,13 +134,13 @@ async function warmWebGL(epoch) {
   resize();updateCamera();
   await Promise.all([world.ready,weapon.ready,...enemies.map(e=>e.ready)]);
   if(epoch!==graphicsEpoch)return;
+  onProgress();
   world.captureReflection?.(renderer);
-  groundShadows=createGroundShadows(T,renderer,scene,enemies,world.bounds);
-  groundShadows.setQuality(graphics);
   gunScene.environment=scene.environment;gunScene.environmentIntensity=.30;
   if(renderer.compileAsync) {
     await renderer.compileAsync(scene,camera);
     if(epoch!==graphicsEpoch)return;
+    onProgress();
     await renderer.compileAsync(gunScene,gunCamera);
     if(epoch!==graphicsEpoch)return;
   }
@@ -174,7 +152,6 @@ async function warmWebGL(epoch) {
 }
 
 function useCompat(reason) {
-  preferCompat=true;
   if(compat || !motor)return;
   graphicsEpoch++;
   interruptWarmup?.(new Error('已切换至兼容画面。'));
@@ -191,7 +168,7 @@ function useCompat(reason) {
   }
   try { if(graphicsContext && !graphicsContext.isContextLost()) graphicsContext.getExtension('WEBGL_lose_context')?.loseContext(); } catch {}
   graphicsContext=null;
-  renderer=groundShadows=cinema=weapon=null;
+  renderer=cinema=weapon=null;
   world=PORT;scene.clear();scene.environment=scene.background=null;gunScene.clear();gunScene.environment=null;
   canvas.width=canvas.height=1;
   compat=createCompatRenderer(compatFrame,PORT);
@@ -547,9 +524,10 @@ function render() {
     return;
   }
   if (!renderer) return;
-  if (cinema && graphics !== 'performance') {
+  if (cinema) {
     cinema.render(scene,camera,gunScene,gunCamera);
   } else {
+    // The canvas can still draw both full-detail scenes on GPUs with no HDR target.
     renderer.setRenderTarget(null);
     renderer.clear();
     renderer.render(scene,camera);
@@ -568,23 +546,10 @@ function frame(now) {
   try {
     step(dt);
     shadowAge+=dt;
-    if(renderer && graphics==='high' && shadowAge>.10) { renderer.shadowMap.needsUpdate=true;shadowAge=0; }
-    groundShadows?.update(dt,graphics);
+    if(renderer && shadowAge>.10) { renderer.shadowMap.needsUpdate=true;shadowAge=0; }
     render();
   } catch(err) {
     if(!recoverGraphics(err)) return;
-  }
-  if(renderer && graphics!=='high') {
-    averageFrame += (dt-averageFrame)*(1-Math.exp(-dt*3));
-    slowTime = averageFrame>.02 ? slowTime+dt : 0;
-    fastTime = averageFrame<.0175 ? fastTime+dt : 0;
-    const current = renderer.getPixelRatio();
-    const floor = Math.min(desiredDpr, Math.max(.55, desiredDpr*.6));
-    if(slowTime>.8 && current>floor+.01) {
-      renderer.setPixelRatio(Math.max(floor,current*.84)); slowTime=fastTime=0;
-    } else if(fastTime>7 && current<desiredDpr-.01) {
-      renderer.setPixelRatio(Math.min(desiredDpr,current+.09)); fastTime=0;
-    }
   }
   nextState-=dt;
   if(nextState<=0 && phase==='playing') { announce(); nextState=.09; }
@@ -654,7 +619,11 @@ function recoverGraphics(reason) {
   console.error(reason);finish('error');return false;
 }
 
-const pendingKey='tidal-graphics-pending';
+const pendingKey='tidal-3d-launch-1.3';
+function clearPendingLaunch() {
+  try{sessionStorage.removeItem(pendingKey);}catch{}
+}
+window.addEventListener('pagehide',clearPendingLaunch);
 function lastLaunchInterrupted() {
   try {
     const timestamp=Number(sessionStorage.getItem(pendingKey));
@@ -663,31 +632,35 @@ function lastLaunchInterrupted() {
 }
 
 async function prepareGraphics(serial) {
-  if(preferCompat || directCompat || (!warmed && compact && lastLaunchInterrupted())) {
-    try{sessionStorage.removeItem(pendingKey);}catch{}
+  if(warmed)return;
+  if(compact && lastLaunchInterrupted()) {
+    clearPendingLaunch();
     useCompat();return;
   }
-  if(warmed)return;
   const epoch=++graphicsEpoch;
   let timer;
   const interrupted=new Promise((_,reject)=>{
     interruptWarmup=reject;
-    timer=setTimeout(()=>reject(new Error('3D 场景加载超时。')),compact?12000:23000);
   });
+  function onProgress() {
+    if(epoch!==graphicsEpoch || !interruptWarmup)return;
+    clearTimeout(timer);
+    timer=setTimeout(()=>interruptWarmup?.(new Error('3D 场景加载超时。')),45000);
+  }
   try{
     if(compact){try{sessionStorage.setItem(pendingKey,String(Date.now()));}catch{}}
-    await Promise.race([warmWebGL(epoch),interrupted]);
+    onProgress();
+    await Promise.race([warmWebGL(epoch,onProgress),interrupted]);
     if(epoch===graphicsEpoch)warmed=true;
   }catch(err){
     if(serial===roundSerial && !compat)useCompat(err);
   }finally{
     clearTimeout(timer);interruptWarmup=null;
-    try{sessionStorage.removeItem(pendingKey);}catch{}
+    clearPendingLaunch();
   }
 }
 
-function start(forceCompat=false) {
-  if(forceCompat===true)preferCompat=true;
+function start() {
   if(phase==='loading') return;
   const serial=++roundSerial;
   clearInput();
@@ -720,7 +693,6 @@ function start(forceCompat=false) {
       if(serial!==roundSerial) return;
       if(renderer)renderer.shadowMap.needsUpdate=true;
       resize();resetWeapon();
-      groundShadows?.update(1,graphics);
       render();
       resume(false);
     } catch(err) {
@@ -865,8 +837,7 @@ canvas.addEventListener('webglcontextlost',e=>{
 });
 
 window.Game={
-  start, pause, resume, restart:start, menu, reload:beginReload, fire, look, lookScreen, screenDelta, setGraphics,
-  useCompat(){try{useCompat();}catch(err){errorMessage=err.message||String(err);finish('error');}},
+  start, pause, resume, restart:start, menu, reload:beginReload, fire, look, lookScreen, screenDelta,
   lean(sign){ touchLean=phase==='playing' ? Math.sign(Number(sign)||0) : 0; },
   jump(){ if(phase==='playing') motor.jump(); },
   aim(down){ aiming=phase==='playing' && !!down; },

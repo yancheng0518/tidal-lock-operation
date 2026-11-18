@@ -1,11 +1,11 @@
 // Software perspective renderer for browsers without a usable WebGL device.
-// The small texture sheets were baked from this level and its credited character art.
+// Texture sheets contain orthographic renders of the level and its character art.
 const axes = [
   [[1,0,0],[0,0,-1],[0,1,0]], [[-1,0,0],[0,0,1],[0,1,0]],
   [[0,0,1],[1,0,0],[0,1,0]], [[0,0,-1],[-1,0,0],[0,1,0]],
   [[0,1,0],[1,0,0],[0,0,-1]], [[0,-1,0],[1,0,0],[0,0,1]]
 ];
-const asset = name => new URL('./compat-assets/'+name, import.meta.url).href;
+const asset = name => new URL('./compat-assets/'+name+'?v=1.3.0', import.meta.url).href;
 const clamp = (x,min,max) => Math.max(min,Math.min(max,x));
 const rgba = (r,g,b) => (255<<24)|(b<<16)|(g<<8)|r;
 const near = .055;
@@ -20,9 +20,21 @@ function makeCanvas(w,h) {
   return c;
 }
 function imageTexture(im) {
-  const c=makeCanvas(im.width,im.height), cx=c.getContext('2d');
-  cx.drawImage(im,0,0);
-  return {width:c.width,pixels:new Uint32Array(cx.getImageData(0,0,c.width,c.height).data.buffer)};
+  const width=im.width,height=im.height,stripHeight=Math.min(96,height);
+  const c=makeCanvas(width,stripHeight), cx=c.getContext('2d',{willReadFrequently:true});
+  if(!cx)throw Error('无法读取场景纹理');
+  const pixels=new Uint32Array(width*height);
+  // Limit scratch canvas memory even for the large ground and equipment atlases.
+  try {
+    for(let y=0;y<height;y+=stripHeight){
+      const rows=Math.min(stripHeight,height-y);
+      cx.clearRect(0,0,width,rows);
+      cx.drawImage(im,0,y,width,rows,0,0,width,rows);
+      const data=cx.getImageData(0,0,width,rows).data;
+      pixels.set(new Uint32Array(data.buffer,data.byteOffset,width*rows),y*width);
+    }
+  } finally {c.width=c.height=1}
+  return {width,pixels};
 }
 function loadImage(name) {
   return new Promise((ok,fail)=>{
@@ -42,12 +54,27 @@ function makeFace(x,y,z,normal,right,up,width,height,rect,texture,colour) {
     x:x+a*width*right[0]+b*height*up[0],
     y:y+a*width*right[1]+b*height*up[1],
     z:z+a*width*right[2]+b*height*up[2],
-    u:tx+.04+u*(tw-.08),v:ty+.04+v*(th-.08)
+    u:tx+.5+u*(tw-1),v:ty+.5+v*(th-1)
   }));
   return {x,y,z,normal,verts,texture,colour};
 }
 function rectFace(x,y,z,side,w,h,rect,texture,colour) {
   return makeFace(x,y,z,...axes[side],w,h,rect,texture,colour);
+}
+
+function filteredColour(source,stride,u,v) {
+  // Four-bit bilinear weights permit red and blue to be interpolated together.
+  u-=.5;v-=.5;
+  const x=u|0,y=v|0,idx=y*stride+x,c=source[idx];
+  const right=source[idx+1],below=source[idx+stride],corner=source[idx+stride+1];
+  if((c&right&below&corner)>>>24<240)return source[(v+.5|0)*stride+(u+.5|0)];
+  const fx=(u-x)*16|0,fy=(v-y)*16|0,ix=16-fx,iy=16-fy,mask=0xff00ff;
+  const topRB=(((c&mask)*ix+(right&mask)*fx)>>>4)&mask;
+  const lowRB=(((below&mask)*ix+(corner&mask)*fx)>>>4)&mask;
+  const rb=(((topRB*iy+lowRB*fy)>>>4)&mask);
+  const topG=(c>>>8&255)*ix+(right>>>8&255)*fx;
+  const lowG=(below>>>8&255)*ix+(corner>>>8&255)*fx;
+  return 0xff000000|rb|((topG*iy+lowG*fy)&0xff00);
 }
 
 // These surfaces and silhouettes are available immediately, including when the
@@ -99,29 +126,49 @@ export function createCompatRenderer(canvas,worldData) {
   if(!ctx)throw new Error('浏览器无法创建二维画布');
   const backing=makeCanvas(1,1),low=backing.getContext('2d',{alpha:false});
   let frame,pixels,depth,width=0,height=0,displayW=0,displayH=0,focal=1,disposed=false;
-  let yard=basicYard(worldData),sky=null,guards=null,hands=null;
+  const outline=basicYard(worldData);
+  let yard=outline,sky=null,guards=null,hands=null;
   const fallbackGuard=basicGuard();
   const walkers=new WeakMap();
-  let quality=1,slowFrames=0;
+  let quality=1,slowFrames=0,fastFrames=0;
 
   function resize(w=canvas.clientWidth,h=canvas.clientHeight){
     if(!w||!h)return;
-    const scale=Math.min(1,Math.sqrt(960000/(w*h)));
+    const scale=Math.min(devicePixelRatio||1,Math.sqrt(2073600/(w*h)));
     displayW=Math.max(1,Math.round(w*scale));displayH=Math.max(1,Math.round(h*scale));
     if(canvas.width!==displayW||canvas.height!==displayH){canvas.width=displayW;canvas.height=displayH}
-    const ratio=Math.min(1,Math.sqrt(109000/(displayW*displayH)))*quality;
+    const ratio=Math.min(1,Math.sqrt(1500000/(displayW*displayH)))*quality;
     width=Math.max(1,Math.round(displayW*ratio));height=Math.max(1,Math.round(displayH*ratio));
     if(backing.width===width&&backing.height===height&&frame)return;
     backing.width=width;backing.height=height;
     frame=low.createImageData(width,height);pixels=new Uint32Array(frame.data.buffer);depth=new Float32Array(width*height);
   }
   // Load independently: gameplay never waits for optional artwork.
-  Promise.all([fetch(asset('surfaces.json')).then(r=>{if(!r.ok)throw Error(r.status);return r.json()}),loadImage('world.webp')])
-    .then(([entries,image])=>{if(disposed)return;const tex=imageTexture(image);
-      yard=entries.map(([x,y,z,id,w,h,tx,ty,tw,th])=>rectFace(x,y,z,id,w,h,[tx,ty,tw,th],tex,0));
-    }).catch(()=>{});
+  async function loadYard(){
+    const response=await fetch(asset('surfaces.json'));
+    if(!response.ok)return;
+    const entries=await response.json(),baked=[];
+    // Decode one atlas at a time. Larger textures never reserve a matching 2D canvas.
+    const count=1+Math.max(...entries.map(entry=>entry[10]));
+    let complete=true;
+    for(let i=0;i<count;i++){
+      if(disposed)return;
+      try{
+        const img=await loadImage(i?'world-'+i+'.webp':'world.webp');
+        if(disposed)return;
+        const texture=imageTexture(img);
+        for(const [x,y,z,id,w,h,tx,ty,tw,th,tile] of entries){
+          if(tile===i)baked.push(rectFace(x,y,z,id,w,h,[tx,ty,tw,th],texture,0));
+        }
+        yard=baked.concat(outline);
+      }catch{complete=false}
+    }
+    if(complete&&!disposed)yard=baked;
+  }
+  loadYard().catch(()=>{});
   loadImage('sky.jpg').then(im=>{if(disposed)return;const tex=imageTexture(im),r=160;
-    sky=axes.map(([n],i)=>rectFace(-n[0]*r,-n[1]*r,-n[2]*r,i,2*r,2*r,[320*(i%4),320*Math.floor(i/4),320,320],tex,0));
+    const side=im.width/4;
+    sky=axes.map(([n],i)=>rectFace(-n[0]*r,-n[1]*r,-n[2]*r,i,2*r,2*r,[side*(i%4),side*Math.floor(i/4),side,side],tex,0));
   }).catch(()=>{});
   loadImage('guards.webp').then(im=>{if(!disposed)guards=imageTexture(im)}).catch(()=>{});
   loadImage('hands.webp').then(im=>{if(!disposed)hands=im}).catch(()=>{});
@@ -141,6 +188,9 @@ export function createCompatRenderer(canvas,worldData) {
     const vx=((b.v-a.v)*acy-(c.v-a.v)*aby)*inv,vy=(abx*(c.v-a.v)-acx*(b.v-a.v))*inv;
     const long=acx/acy,upper=aby>0?abx/aby:0,lower=c.y>b.y?(c.x-b.x)/(c.y-b.y):0;
     const source=tex?.pixels,stride=tex?.width||0;
+    const au=a.u/a.q,av=a.v/a.q;
+    const textureArea=(b.u/b.q-au)*(c.v/c.q-av)-(c.u/c.q-au)*(b.v/b.q-av);
+    const magnified=source && Math.abs(area)>.85*Math.abs(textureArea);
     for(let y=first;y<end;y++){
       const dy=y+.5-a.y;
       const e1=a.x+dy*long,e2=y+.5<b.y?a.x+dy*upper:b.x+(y+.5-b.y)*lower;
@@ -153,7 +203,8 @@ export function createCompatRenderer(canvas,worldData) {
         let colour=solid;
         if(source){
           const distance=1/q;
-          colour=source[(v*distance|0)*stride+(u*distance|0)];
+          const tx=u*distance,ty=v*distance;
+          colour=magnified?filteredColour(source,stride,tx,ty):source[(ty|0)*stride+(tx|0)];
           if((colour>>>24)<80)continue;
         }
         depth[idx]=q;pixels[idx]=colour|0xff000000;
@@ -211,7 +262,7 @@ export function createCompatRenderer(canvas,worldData) {
       if(!guards&&elapsed>.27)return;
     } else {state.death=-1;}
     const sn=Math.sin(angle),cs=Math.cos(angle);
-    const box=guards?[side*110,pose*120,110,120]:[0,0,72,96];
+    const box=guards?[side*176,pose*192,176,192]:[0,0,72,96];
     const face=makeFace(p.x,p.y+.96+cy,p.z,[sn,0,cs],[cs,0,-sn],[0,1,0],1.98,2.16,box,guards||fallbackGuard,0);
     drawFace(face);
     if(enemy.hp>0&&enemy.firing>.72) {
@@ -239,7 +290,8 @@ export function createCompatRenderer(canvas,worldData) {
       ctx.save();ctx.translate(cx+mx*scale,cy+my*scale);ctx.scale(scale,scale);ctx.rotate(t*31);
       polygon(ctx,[[-15,1],[-3,-2],[1,-13],[3,-2],[14,2],[2,3],[-2,12],[-2,2]],'#ffd892');ctx.restore();
     }
-    ctx.drawImage(hands,(pose%4)*480,Math.floor(pose/4)*180,480,180,cx-284*scale,cy-20*scale,480*scale,180*scale);
+    const sw=hands.width/4,sh=hands.height/5;
+    ctx.drawImage(hands,(pose%4)*sw,Math.floor(pose/4)*sh,sw,sh,cx-284*scale,cy-20*scale,480*scale,180*scale);
   }
   function render(v) {
     if(disposed||!v.camera)return;
@@ -249,17 +301,19 @@ export function createCompatRenderer(canvas,worldData) {
     matrix=camera.matrixWorldInverse.elements;eye=camera.position;
     focal=.5*height/Math.tan(camera.fov*Math.PI/360);
     depth.fill(0);
-    if(sky){
-      pixels.fill(rgba(162,169,170));for(const face of sky)drawFace(face,true);
-    } else {
+    if(!sky){
       for(let y=0;y<height;y++){const t=y/height;pixels.fill(rgba(94+t*100,128+t*64,156+t*26),y*width,(y+1)*width)}
     }
     for(const face of yard)drawFace(face);
     for(const e of v.enemies||[])drawGuard(e,v.time||0);
+    if(sky)for(const face of sky)drawFace(face,true);
     low.putImageData(frame,0,0);ctx.drawImage(backing,0,0,displayW,displayH);
     viewmodel(v);
-    slowFrames=performance.now()-begin>24?slowFrames+1:Math.max(0,slowFrames-1);
-    if(slowFrames>12&&quality>.64){quality*=.84;slowFrames=0;resize()}
+    const cost=performance.now()-begin;
+    slowFrames=cost>27?slowFrames+1:Math.max(0,slowFrames-2);
+    fastFrames=cost<12?fastFrames+1:0;
+    if(slowFrames>=14&&width*height>230000){quality*=.88;slowFrames=fastFrames=0;resize()}
+    else if(fastFrames>=180&&quality<1){quality=Math.min(1,quality*1.1);slowFrames=fastFrames=0;resize()}
   }
   resize();
   return {render,resize,dispose(){disposed=true;yard=[];sky=guards=hands=null;backing.width=backing.height=1}};
